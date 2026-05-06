@@ -11,6 +11,19 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module">
+      const pagesBase = "/Study-Room-Reservations/";
+      const isGitHubPages = location.hostname === "fernando-ace.github.io";
+
+      if (isGitHubPages) {
+        const styles = document.createElement("link");
+        styles.rel = "stylesheet";
+        styles.href = `${pagesBase}assets/app.css`;
+        document.head.append(styles);
+        import(`${pagesBase}assets/main.js`);
+      } else {
+        import("/src/main.tsx");
+      }
+    </script>
   </body>
 </html>
