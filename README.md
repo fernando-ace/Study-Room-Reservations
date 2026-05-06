@@ -26,4 +26,12 @@ Then open `http://127.0.0.1:5173`.
 npm run build
 ```
 
+## GitHub Pages
+
+The site is configured to publish at:
+
+https://fernando-ace.github.io/Study-Room-Reservations/
+
+Pushing to `main` runs `.github/workflows/deploy-pages.yml`, builds the Vite app, and deploys the `dist` folder through GitHub Pages. In the repository settings, set Pages to use **GitHub Actions** as the source.
+
 This prototype uses local mock data only. It does not connect to AUthenticate, production APIs, or real reservation services.
