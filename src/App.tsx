@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import type { FormEvent, InputHTMLAttributes } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent, InputHTMLAttributes, PointerEvent } from "react";
 import {
   Bell,
   Building2,
@@ -390,7 +390,7 @@ function ReserveView({
   const [kind, setKind] = useState<ResourceKind | "All">("All");
   const [floor, setFloor] = useState("All");
   const [status, setStatus] = useState<ResourceStatus | "All">("All");
-  const [minCapacity, setMinCapacity] = useState(1);
+  const [groupSizeInput, setGroupSizeInput] = useState("1");
   const [rangeStart, setRangeStart] = useState(today);
   const [rangeEnd, setRangeEnd] = useState(addDays(today, 1));
   const [rangeResults, setRangeResults] = useState<AvailabilitySlot[]>([]);
@@ -401,25 +401,30 @@ function ReserveView({
     setFloor("All");
     setStatus("All");
     setQuery("");
+    setGroupSizeInput("1");
   }, [activeSite?.id]);
 
   const kinds = activeSite ? resourceKinds(activeSite.id) : [];
   const floors = activeSite ? resourceFloors(activeSite.id) : [];
+  const minCapacity = Math.max(1, Number(groupSizeInput || "1"));
   const filtered = useMemo(
     () =>
-      resources.filter((item) => {
-        const matchesQuery =
-          !query ||
-          item.name.toLowerCase().includes(query.toLowerCase()) ||
-          item.features.join(" ").toLowerCase().includes(query.toLowerCase());
-        return (
-          matchesQuery &&
-          (kind === "All" || item.kind === kind) &&
-          (floor === "All" || item.floor === floor) &&
-          (status === "All" || item.status === status) &&
-          item.capacity >= minCapacity
-        );
-      }),
+      sortResourcesByFit(
+        resources.filter((item) => {
+          const matchesQuery =
+            !query ||
+            item.name.toLowerCase().includes(query.toLowerCase()) ||
+            item.features.join(" ").toLowerCase().includes(query.toLowerCase());
+          return (
+            matchesQuery &&
+            (kind === "All" || item.kind === kind) &&
+            (floor === "All" || item.floor === floor) &&
+            (status === "All" || item.status === status) &&
+            item.capacity >= minCapacity
+          );
+        }),
+        minCapacity,
+      ),
     [floor, kind, minCapacity, query, resources, status],
   );
 
@@ -433,10 +438,13 @@ function ReserveView({
   }, [filtered, onResourceSelect, selectedResource, status]);
 
   const grouped = activeSite?.id === "brown-kopel" ? groupedResources("brown-kopel") : groupedResources(activeSite?.id ?? "");
-  const visibleGroups = grouped.map((group) => ({
-    ...group,
-    resources: group.resources.filter((resource) => filtered.some((item) => item.id === resource.id)),
-  }));
+  const visibleGroups =
+    minCapacity > 1
+      ? [{ label: "Best fit", resources: filtered }]
+      : grouped.map((group) => ({
+          ...group,
+          resources: group.resources.filter((resource) => filtered.some((item) => item.id === resource.id)),
+        }));
 
   async function searchRange(event: FormEvent) {
     event.preventDefault();
@@ -482,7 +490,19 @@ function ReserveView({
         </label>
         <label className="field">
           <span>Group size</span>
-          <input type="number" min={1} max={150} value={minCapacity} onChange={(event) => setMinCapacity(Number(event.target.value))} />
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={groupSizeInput}
+            onChange={(event) => {
+              const digits = event.target.value.replace(/\D/g, "");
+              setGroupSizeInput(digits.replace(/^0+(?=\d)/, ""));
+            }}
+            onBlur={() => {
+              if (!groupSizeInput) setGroupSizeInput("1");
+            }}
+          />
         </label>
         <label className="field">
           <span>Status</span>
@@ -586,9 +606,12 @@ function ResourceGroup({
   onSelect: (id: string) => void;
   onRequest: () => void;
 }) {
-  const [open, setOpen] = useState(label !== "View All" && (label === "Bottom Floor" || resources.length < 6));
+  const [open, setOpen] = useState(label !== "View All" && (label === "Best fit" || label === "Bottom Floor" || resources.length < 6));
   useEffect(() => {
-    if (label !== "View All" && (resources.length < 6 || resources.some((resource) => resource.id === selectedResourceId))) {
+    if (
+      label !== "View All" &&
+      (label === "Best fit" || resources.length < 6 || resources.some((resource) => resource.id === selectedResourceId))
+    ) {
       setOpen(true);
     }
   }, [label, resources, selectedResourceId]);
@@ -725,8 +748,46 @@ function CalendarPanel({
   onWeekChange: (date: string) => void;
   onSlotSelect: (slot: AvailabilitySlot) => void;
 }) {
+  const [dragStart, setDragStart] = useState<AvailabilitySlot | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef<AvailabilitySlot | null>(null);
+  const isDraggingRef = useRef(false);
   const days = Array.from({ length: 6 }, (_, index) => addDays(weekStart, index));
   const slots = availability.filter((slot) => slot.resourceId === resource?.id);
+
+  function selectSlotRange(start: AvailabilitySlot, end: AvailabilitySlot) {
+    if (start.resourceId !== end.resourceId || start.date !== end.date) return;
+    const rangeStart = start.start <= end.start ? start : end;
+    const rangeEnd = start.start <= end.start ? end : start;
+    onSlotSelect({
+      ...rangeStart,
+      end: rangeEnd.end,
+      status: "available",
+    });
+  }
+
+  function startDrag(slot: AvailabilitySlot) {
+    dragStartRef.current = slot;
+    isDraggingRef.current = true;
+    setDragStart(slot);
+    setIsDragging(true);
+    onSlotSelect({ ...slot, status: "available" });
+  }
+
+  function extendDrag(slot: AvailabilitySlot) {
+    const activeStart = dragStartRef.current ?? dragStart;
+    if (!isDraggingRef.current && !isDragging) return;
+    if (!activeStart) return;
+    selectSlotRange(activeStart, slot);
+  }
+
+  function stopDrag() {
+    dragStartRef.current = null;
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    setDragStart(null);
+  }
+
   return (
     <section className="calendar-panel">
       <div className="calendar-tools">
@@ -741,7 +802,7 @@ function CalendarPanel({
         </button>
       </div>
       <p className="instruction">Tap or drag across available cells to select the time desired.</p>
-      <div className="week-grid">
+      <div className="week-grid" onPointerUp={stopDrag} onPointerLeave={stopDrag} onPointerCancel={stopDrag}>
         <div className="time-head" />
         {days.map((day) => (
           <div className="day-head" key={day}>
@@ -757,6 +818,8 @@ function CalendarPanel({
             resource={resource}
             selectedSlot={selectedSlot}
             onSlotSelect={onSlotSelect}
+            onDragStart={startDrag}
+            onDragEnter={extendDrag}
           />
         ))}
       </div>
@@ -771,6 +834,8 @@ function TimeRow({
   resource,
   selectedSlot,
   onSlotSelect,
+  onDragStart,
+  onDragEnter,
 }: {
   time: string;
   days: string[];
@@ -778,6 +843,8 @@ function TimeRow({
   resource?: Resource;
   selectedSlot: AvailabilitySlot | null;
   onSlotSelect: (slot: AvailabilitySlot) => void;
+  onDragStart: (slot: AvailabilitySlot) => void;
+  onDragEnter: (slot: AvailabilitySlot) => void;
 }) {
   return (
     <>
@@ -793,14 +860,23 @@ function TimeRow({
           status,
         };
         const selected =
-          selectedSlot?.resourceId === slot.resourceId && selectedSlot.date === slot.date && selectedSlot.start === slot.start;
+          selectedSlot?.resourceId === slot.resourceId &&
+          selectedSlot.date === slot.date &&
+          slot.start >= selectedSlot.start &&
+          slot.start < selectedSlot.end;
+        const availableSlot = { ...slot, status: "available" as const };
         return (
           <button
             key={`${day}-${time}`}
             type="button"
             disabled={!resource || status !== "available"}
             className={`time-cell ${status} ${selected ? "selected" : ""}`}
-            onClick={() => onSlotSelect({ ...slot, status: "available" })}
+            onClick={() => onSlotSelect(availableSlot)}
+            onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
+              event.preventDefault();
+              onDragStart(availableSlot);
+            }}
+            onPointerEnter={() => onDragEnter(availableSlot)}
           >
             <span>{status === "available" ? "Available" : status === "reserved" ? "Reserved" : "Blocked"}</span>
           </button>
@@ -808,6 +884,40 @@ function TimeRow({
       })}
     </>
   );
+}
+
+function sortResourcesByFit(resources: Resource[], minCapacity: number) {
+  if (minCapacity <= 1) return resources;
+  return [...resources].sort((a, b) => {
+    const reserveRank = actionRank(a) - actionRank(b);
+    if (reserveRank) return reserveRank;
+    const statusRank = statusRankForFit(a) - statusRankForFit(b);
+    if (statusRank) return statusRank;
+    const capacityRank = a.capacity - b.capacity;
+    if (capacityRank) return capacityRank;
+    const kindRank = kindRankForFit(a) - kindRankForFit(b);
+    if (kindRank) return kindRank;
+    return a.name.localeCompare(b.name, undefined, { numeric: true });
+  });
+}
+
+function actionRank(resource: Resource) {
+  if (resource.action === "reserve") return 0;
+  if (resource.action === "both") return 1;
+  return 2;
+}
+
+function statusRankForFit(resource: Resource) {
+  if (resource.status === "Open") return 0;
+  if (resource.status === "Approval needed") return 1;
+  return 2;
+}
+
+function kindRankForFit(resource: Resource) {
+  if (resource.kind === "Study Room") return 0;
+  if (resource.kind === "Conference Room") return 1;
+  if (resource.kind === "Classroom") return 2;
+  return 3;
 }
 
 function FloorMapView({
@@ -830,6 +940,12 @@ function FloorMapView({
   useEffect(() => setFloor(maps[0]?.floor ?? ""), [site?.id]);
   const activeMap = maps.find((map) => map.floor === floor) ?? maps[0];
   const selected = resourceById(selectedResourceId);
+  useEffect(() => {
+    if (!activeMap?.zones.length) return;
+    if (!activeMap.zones.some((zone) => zone.resourceId === selectedResourceId)) {
+      onResourceSelect(activeMap.zones[0].resourceId);
+    }
+  }, [activeMap, onResourceSelect, selectedResourceId]);
   return (
     <section className="view">
       <div className="page-intro">
@@ -848,9 +964,20 @@ function FloorMapView({
             </div>
           ) : null}
           {activeMap ? (
-            <div className="floor-map" aria-label={`${site?.name} ${activeMap.label} map`}>
-              <div className="map-spine" />
-              <div className="map-atrium">Atrium / Commons</div>
+            <div className={mapClassName(site?.id, activeMap.floor)} aria-label={`${site?.name} ${activeMap.label} map`}>
+              {site?.id === "brown-kopel" ? (
+                <>
+                  <div className="map-building-outline" />
+                  <div className="map-blueprint map-blueprint-projects">Student projects / makerspace</div>
+                  <div className="map-blueprint map-blueprint-core">Service core</div>
+                  <div className="map-blueprint map-blueprint-commons">Atrium / Commons</div>
+                  <div className="map-corridor map-corridor-main" />
+                  <div className="map-corridor map-corridor-north" />
+                  <div className="map-corridor map-corridor-east" />
+                  <div className="map-stair map-stair-west">Stairs</div>
+                  <div className="map-stair map-stair-east">Elev.</div>
+                </>
+              ) : null}
               {activeMap.zones.map((zone) => {
                 const resource = resourceById(zone.resourceId);
                 if (!resource) return null;
@@ -906,6 +1033,11 @@ function FloorMapView({
       </div>
     </section>
   );
+}
+
+function mapClassName(siteId?: string, floor?: string) {
+  const floorName = floor?.toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "unknown";
+  return `floor-map ${siteId === "brown-kopel" ? "brown-kopel-map" : ""} floor-${floorName}`;
 }
 
 function BookingsView({
