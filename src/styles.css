@@ -2249,6 +2249,14 @@ button:disabled {
   gap: 16px;
 }
 
+.workspace-grid > * {
+  min-width: 0;
+}
+
+.detail-panel > * {
+  min-width: 0;
+}
+
 .results-panel,
 .detail-panel,
 .booking-grid > section,
@@ -2519,7 +2527,8 @@ button:disabled {
     gap: 5px;
   }
 
-  .map-intro {
+  .map-intro,
+  .page-intro {
     display: grid;
     margin-bottom: 18px;
   }

@@ -227,6 +227,7 @@ export default function App() {
             onResourceSelect={setSelectedResourceId}
             onSlotSelect={setSelectedSlot}
             onConfirm={setPendingReservationSlot}
+            onMapView={() => navigate("map")}
             onRequest={() => navigate("requests")}
           />
         ) : null}
@@ -348,6 +349,7 @@ function ReserveView({
   onResourceSelect,
   onSlotSelect,
   onConfirm,
+  onMapView,
   onRequest,
 }: {
   activeSite?: Site;
@@ -360,6 +362,7 @@ function ReserveView({
   onResourceSelect: (id: string) => void;
   onSlotSelect: (slot: AvailabilitySlot) => void;
   onConfirm: (slot: AvailabilitySlot) => void;
+  onMapView: () => void;
   onRequest: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -437,8 +440,16 @@ function ReserveView({
   return (
     <section className="view reserve-view">
       <div className="page-intro">
-        <p>{activeSite?.databaseName}</p>
-        <h1>Reserve spaces, equipment, and rooms without the old maze.</h1>
+        <div>
+          <p>{activeSite?.databaseName}</p>
+          <h1>{activeSite?.mapMode === "floor-plan" ? "Find your room" : "Find a resource"}</h1>
+        </div>
+        {activeSite?.mapMode === "floor-plan" ? (
+          <div className="view-toggle" aria-label="View options">
+            <button type="button" aria-pressed="false" onClick={onMapView}><Map size={17} /> Map</button>
+            <button className="active" type="button" aria-pressed="true"><List size={17} /> List</button>
+          </div>
+        ) : null}
       </div>
       <div className="quick-search">
         <label className="field search-field">
@@ -966,8 +977,8 @@ function FloorMapView({
           {searchNote ? <p className="search-feedback" role="status">{searchNote}</p> : null}
         </div>
         <div className="view-toggle" aria-label="View options">
-          <button className="active" type="button"><Map size={17} /> Map</button>
-          <button type="button" onClick={onListView}><List size={17} /> List</button>
+          <button className="active" type="button" aria-pressed="true"><Map size={17} /> Map</button>
+          <button type="button" aria-pressed="false" onClick={onListView}><List size={17} /> List</button>
         </div>
       </div>
       <div className="map-search-bar">
