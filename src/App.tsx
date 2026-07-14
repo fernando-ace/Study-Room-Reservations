@@ -2,19 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, InputHTMLAttributes, PointerEvent } from "react";
 import {
   Bell,
-  Building2,
   Calendar,
   Check,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
   Clock3,
+  DoorOpen,
   Filter,
-  Home,
   Layers3,
+  List,
+  LocateFixed,
   Map,
   MapPin,
-  Menu,
   Plus,
   Search,
   Settings,
@@ -22,7 +22,10 @@ import {
   Trash2,
   Users,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
+import { AppHeader } from "./components/AppHeader";
 import { today } from "./data/mockData";
 import {
   cancelReservation,
@@ -89,7 +92,7 @@ const pricingHints = [
 export default function App() {
   const [sites, setSites] = useState<Site[]>([]);
   const [activeSiteId, setActiveSiteId] = useState("brown-kopel");
-  const [view, setView] = useState<View>("reserve");
+  const [view, setView] = useState<View>("map");
   const [navOpen, setNavOpen] = useState(false);
   const [siteMenuOpen, setSiteMenuOpen] = useState(false);
   const [resources, setResources] = useState<Resource[]>([]);
@@ -162,48 +165,32 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <AppHeader
+        activeSite={activeSite}
+        activeSiteId={activeSiteId}
+        navOpen={navOpen}
+        siteMenuOpen={siteMenuOpen}
+        sites={sites}
+        onHome={() => navigate("map")}
+        onProfile={() => navigate("profile")}
+        onSiteChange={(site) => {
+          setActiveSiteId(site.id);
+          setSiteMenuOpen(false);
+          navigate(site.mapMode === "floor-plan" ? "map" : "reserve");
+          setSelectedSlot(null);
+        }}
+        onSiteMenuToggle={() => setSiteMenuOpen((open) => !open)}
+        onNavToggle={() => setNavOpen((open) => !open)}
+      />
       <aside className={`sidebar ${navOpen ? "is-open" : ""}`}>
-        <div className="brand">
-          <div className="brand-mark">AU</div>
-          <div>
-            <p>Engineering Reservations</p>
-            <strong>{activeSite?.databaseName ?? "Reservations"}</strong>
-            {activeSite?.locationNote ? <small>{activeSite.locationNote}</small> : null}
-          </div>
+        <div className="sidebar-context">
+          <span>Current building</span>
+          <strong>{activeSite?.shortName ?? "Reservations"}</strong>
+          <small>{activeSite?.category}</small>
         </div>
-        <button className="site-switch" type="button" onClick={() => setSiteMenuOpen((open) => !open)}>
-          <Building2 size={18} />
-          <span>
-            {activeSite?.name ?? "Choose site"}
-            <small>{activeSite?.category}</small>
-          </span>
-        </button>
-        {siteMenuOpen ? (
-          <div className="site-menu">
-            {sites.map((site) => (
-              <button
-                className={site.id === activeSiteId ? "active" : ""}
-                key={site.id}
-                type="button"
-                onClick={() => {
-                  setActiveSiteId(site.id);
-                  setSiteMenuOpen(false);
-                  navigate("reserve");
-                  setSelectedSlot(null);
-                }}
-              >
-                <strong>{site.name}</strong>
-                <small>{site.category}</small>
-              </button>
-            ))}
-          </div>
-        ) : null}
         <nav className="nav-list" aria-label="Primary navigation">
-          <NavButton icon={<Home size={18} />} active={view === "reserve"} onClick={() => navigate("reserve")}>
-            Reserve
-          </NavButton>
-          <NavButton icon={<Map size={18} />} active={view === "map"} onClick={() => navigate("map")}>
-            Map
+          <NavButton icon={<Search size={18} />} active={view === "map"} onClick={() => navigate("map")}>
+            Find a room
           </NavButton>
           <NavButton icon={<Calendar size={18} />} active={view === "bookings"} onClick={() => navigate("bookings")}>
             My Bookings
@@ -211,28 +198,13 @@ export default function App() {
           <NavButton icon={<ClipboardList size={18} />} active={view === "requests"} onClick={() => navigate("requests")}>
             Special Requests
           </NavButton>
-          <NavButton icon={<Settings size={18} />} active={view === "profile"} onClick={() => navigate("profile")}>
-            Profile
-          </NavButton>
         </nav>
-        <div className="source-nav">
-          {activeSite?.nav.map((item) => (
-            <span key={item}>{item}</span>
-          ))}
-        </div>
+        <button className={`profile-nav ${view === "profile" ? "active" : ""}`} type="button" onClick={() => navigate("profile")}>
+          <Settings size={18} /><span>Preferences</span>
+        </button>
       </aside>
 
       <main className="main-content">
-        <header className="mobile-topbar">
-          <button type="button" aria-label="Toggle navigation" onClick={() => setNavOpen((open) => !open)}>
-            {navOpen ? <X size={22} /> : <Menu size={22} />}
-          </button>
-          <span>{activeSite?.shortName}</span>
-          <button type="button" aria-label="Open profile" onClick={() => navigate("profile")}>
-            <Settings size={20} />
-          </button>
-        </header>
-
         {toast ? (
           <div className="toast" role="status">
             <Check size={18} />
@@ -262,9 +234,13 @@ export default function App() {
           <FloorMapView
             site={activeSite}
             resources={resources}
+            availability={availability}
             selectedResourceId={selectedResourceId}
+            selectedSlot={selectedSlot}
             onResourceSelect={setSelectedResourceId}
-            onReserve={() => navigate("reserve")}
+            onSlotSelect={setSelectedSlot}
+            onConfirm={setPendingReservationSlot}
+            onListView={() => navigate("reserve")}
             onRequest={() => navigate("requests")}
           />
         ) : null}
@@ -344,11 +320,11 @@ export default function App() {
         ) : null}
 
         <nav className="bottom-nav" aria-label="Mobile navigation">
-          <NavButton icon={<Home size={18} />} active={view === "reserve"} onClick={() => navigate("reserve")}>
-            Reserve
-          </NavButton>
           <NavButton icon={<Map size={18} />} active={view === "map"} onClick={() => navigate("map")}>
-            Map
+            Find
+          </NavButton>
+          <NavButton icon={<List size={18} />} active={view === "reserve"} onClick={() => navigate("reserve")}>
+            Rooms
           </NavButton>
           <NavButton icon={<Calendar size={18} />} active={view === "bookings"} onClick={() => navigate("bookings")}>
             Bookings
@@ -923,39 +899,90 @@ function kindRankForFit(resource: Resource) {
 function FloorMapView({
   site,
   resources,
+  availability,
   selectedResourceId,
+  selectedSlot,
   onResourceSelect,
-  onReserve,
+  onSlotSelect,
+  onConfirm,
+  onListView,
   onRequest,
 }: {
   site?: Site;
   resources: Resource[];
+  availability: AvailabilitySlot[];
   selectedResourceId: string;
+  selectedSlot: AvailabilitySlot | null;
   onResourceSelect: (id: string) => void;
-  onReserve: () => void;
+  onSlotSelect: (slot: AvailabilitySlot) => void;
+  onConfirm: (slot: AvailabilitySlot) => void;
+  onListView: () => void;
   onRequest: () => void;
 }) {
   const maps = mapsForSite(site?.id ?? "");
-  const [floor, setFloor] = useState(maps[0]?.floor ?? "");
-  useEffect(() => setFloor(maps[0]?.floor ?? ""), [site?.id]);
+  const preferredFloor = maps.find((map) => map.floor === "Floor 2")?.floor ?? maps[0]?.floor ?? "";
+  const [floor, setFloor] = useState(preferredFloor);
+  const [groupSize, setGroupSize] = useState("4");
+  const [duration, setDuration] = useState("60");
+  const [startTime, setStartTime] = useState("Now");
+  const [zoom, setZoom] = useState(1);
+  const [searchNote, setSearchNote] = useState("");
+  useEffect(() => setFloor(maps.find((map) => map.floor === "Floor 2")?.floor ?? maps[0]?.floor ?? ""), [site?.id]);
   const activeMap = maps.find((map) => map.floor === floor) ?? maps[0];
   const selected = resourceById(selectedResourceId);
+  const selectedAvailability = availability.filter(
+    (slot) => slot.resourceId === selectedResourceId && slot.date === today && slot.status === "available",
+  );
+
   useEffect(() => {
     if (!activeMap?.zones.length) return;
     if (!activeMap.zones.some((zone) => zone.resourceId === selectedResourceId)) {
-      onResourceSelect(activeMap.zones[0].resourceId);
+      const firstOpen = activeMap.zones.find((zone) => resourceById(zone.resourceId)?.status === "Open");
+      onResourceSelect(firstOpen?.resourceId ?? activeMap.zones[0].resourceId);
     }
   }, [activeMap, onResourceSelect, selectedResourceId]);
+
+  function findRooms() {
+    if (!activeMap) return;
+    const fit = activeMap.zones
+      .map((zone) => resourceById(zone.resourceId))
+      .find((resource) => resource?.status === "Open" && resource.capacity >= Number(groupSize));
+    if (fit) {
+      onResourceSelect(fit.id);
+      setSearchNote(`${activeMap.zones.filter((zone) => {
+        const room = resourceById(zone.resourceId);
+        return room?.status === "Open" && room.capacity >= Number(groupSize);
+      }).length} rooms fit your search.`);
+    } else {
+      setSearchNote("No rooms on this floor match that group size.");
+    }
+  }
+
   return (
-    <section className="view">
-      <div className="page-intro">
-        <p>{site?.mapMode === "floor-plan" ? "Floor Maps" : "Resource Map"}</p>
-        <h1>{site?.shortName} layout and availability.</h1>
+    <section className="view map-view">
+      <div className="map-intro">
+        <div>
+          <h1>Find your room</h1>
+          {searchNote ? <p className="search-feedback" role="status">{searchNote}</p> : null}
+        </div>
+        <div className="view-toggle" aria-label="View options">
+          <button className="active" type="button"><Map size={17} /> Map</button>
+          <button type="button" onClick={onListView}><List size={17} /> List</button>
+        </div>
       </div>
-      <div className="map-layout">
-        <section className="map-canvas-panel">
+      <div className="map-search-bar">
+        <label><span>Date</span><div><Calendar size={18} /><strong>Today, July 14</strong></div></label>
+        <label><span>Start time</span><div><Clock3 size={18} /><select value={startTime} onChange={(event) => setStartTime(event.target.value)}><option>Now</option><option>1:00 PM</option><option>3:00 PM</option></select></div></label>
+        <label><span>Duration</span><div><Clock3 size={18} /><select value={duration} onChange={(event) => setDuration(event.target.value)}><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select></div></label>
+        <label><span>People</span><div><Users size={18} /><select value={groupSize} onChange={(event) => setGroupSize(event.target.value)}><option value="1">1 person</option><option value="2">2 people</option><option value="4">4 people</option><option value="6">6 people</option><option value="10">10+ people</option></select></div></label>
+        <button className="find-button" type="button" onClick={findRooms}>Find rooms</button>
+      </div>
+
+      <div className="map-workspace">
+        <aside className="floor-rail">
+          <span>Floors</span>
           {maps.length ? (
-            <div className="floor-tabs">
+            <div className="floor-tabs" aria-label="Choose floor">
               {maps.map((map) => (
                 <button className={map.floor === activeMap?.floor ? "active" : ""} key={map.floor} type="button" onClick={() => setFloor(map.floor)}>
                   {map.label}
@@ -963,36 +990,55 @@ function FloorMapView({
               ))}
             </div>
           ) : null}
+          <div className="map-legend">
+            <strong>Map legend</strong>
+            <span><i className="legend-open" /> Available</span>
+            <span><i className="legend-reserved" /> Reserved</span>
+            <span><i className="legend-approval" /> Unavailable</span>
+          </div>
+        </aside>
+
+        <section className="map-canvas-panel">
           {activeMap ? (
-            <div className={mapClassName(site?.id, activeMap.floor)} aria-label={`${site?.name} ${activeMap.label} map`}>
-              {site?.id === "brown-kopel" ? (
-                <>
-                  <div className="map-building-outline" />
-                  <div className="map-blueprint map-blueprint-projects">Student projects / makerspace</div>
-                  <div className="map-blueprint map-blueprint-core">Service core</div>
-                  <div className="map-blueprint map-blueprint-commons">Atrium / Commons</div>
-                  <div className="map-corridor map-corridor-main" />
-                  <div className="map-corridor map-corridor-north" />
-                  <div className="map-corridor map-corridor-east" />
-                  <div className="map-stair map-stair-west">Stairs</div>
-                  <div className="map-stair map-stair-east">Elev.</div>
-                </>
-              ) : null}
-              {activeMap.zones.map((zone) => {
-                const resource = resourceById(zone.resourceId);
-                if (!resource) return null;
-                return (
-                  <button
-                    key={zone.resourceId}
-                    className={`map-zone ${statusClass(resource.status)} ${zone.resourceId === selectedResourceId ? "selected" : ""}`}
-                    type="button"
-                    style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.w}%`, height: `${zone.h}%` }}
-                    onClick={() => onResourceSelect(zone.resourceId)}
-                  >
-                    {resource.name}
-                  </button>
-                );
-              })}
+            <div className="map-stage">
+              <div className="map-zoom-controls">
+                <button type="button" aria-label="Zoom in" onClick={() => setZoom((value) => Math.min(1.2, value + 0.1))}><ZoomIn size={18} /></button>
+                <button type="button" aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(0.8, value - 0.1))}><ZoomOut size={18} /></button>
+                <button type="button" aria-label="Center selected room" onClick={() => { setZoom(1); if (activeMap.zones.some((zone) => zone.resourceId === "bk-2132")) onResourceSelect("bk-2132"); }}><LocateFixed size={18} /></button>
+              </div>
+              <div className={mapClassName(site?.id, activeMap.floor)} style={{ transform: `scale(${zoom})` }} aria-label={`${site?.name} ${activeMap.label} map`}>
+                {site?.id === "brown-kopel" ? (
+                  <>
+                    <div className="map-building-outline" />
+                    <div className="map-blueprint map-blueprint-projects">Student projects</div>
+                    <div className="map-blueprint map-blueprint-core">Service core</div>
+                    <div className="map-blueprint map-blueprint-commons">Atrium</div>
+                    <div className="map-corridor map-corridor-main" />
+                    <div className="map-corridor map-corridor-north" />
+                    <div className="map-corridor map-corridor-east" />
+                    <div className="map-stair map-stair-west">Stairs</div>
+                    <div className="map-stair map-stair-east">Elevator</div>
+                    <span className="main-entrance"><MapPin size={15} /> Main entrance</span>
+                  </>
+                ) : null}
+                {activeMap.zones.map((zone) => {
+                  const resource = resourceById(zone.resourceId);
+                  if (!resource) return null;
+                  return (
+                    <button
+                      key={zone.resourceId}
+                      className={`map-zone ${statusClass(resource.status)} ${zone.resourceId === selectedResourceId ? "selected" : ""}`}
+                      type="button"
+                      aria-label={`${resource.name}, ${resource.status}, seats ${resource.capacity}`}
+                      style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.w}%`, height: `${zone.h}%` }}
+                      onClick={() => onResourceSelect(zone.resourceId)}
+                    >
+                      <span>{resource.name}</span>
+                      {zone.resourceId === selectedResourceId ? <MapPin size={14} /> : null}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           ) : (
             <div className="resource-zone-map">
@@ -1016,19 +1062,40 @@ function FloorMapView({
               ))}
             </div>
           )}
-          <div className="map-legend">
-            <span><i className="legend-open" /> Available/Open</span>
-            <span><i className="legend-reserved" /> Reserved/Closed</span>
-            <span><i className="legend-approval" /> Approval needed</span>
-            <span><i className="legend-selected" /> Selected</span>
-          </div>
         </section>
-        <aside className="detail-panel">
-          <ResourceDetail resource={selected} selectedSlot={null} onRequest={onRequest} onConfirm={async () => undefined} />
-          <button className="primary-action" type="button" onClick={onReserve}>
-            <Clock3 size={18} />
-            View calendar
-          </button>
+
+        <aside className="map-detail-panel">
+          {selected ? (
+            <>
+              <div className="room-detail-heading">
+                <div><span className={`status-dot ${statusClass(selected.status)}`} /><strong>{selected.status === "Open" ? "Available now" : selected.status}</strong></div>
+                <h2>{selected.kind === "Study Room" ? "Room" : selected.kind} {selected.name}</h2>
+              </div>
+              <div className="room-facts">
+                <span><Users size={18} /> Seats {selected.capacity}</span>
+                {selected.features.slice(0, 3).map((feature, index) => <span key={feature}>{index === 0 ? <DoorOpen size={18} /> : index === 1 ? <Layers3 size={18} /> : <MapPin size={18} />}{feature}</span>)}
+              </div>
+              <div className="availability-list">
+                <div><h3>Today</h3><span>{selectedAvailability.length} open times</span></div>
+                {selectedAvailability.length ? selectedAvailability.map((slot) => {
+                  const active = selectedSlot?.resourceId === slot.resourceId && selectedSlot.start === slot.start;
+                  return (
+                    <button className={active ? "active" : ""} type="button" key={`${slot.date}-${slot.start}`} onClick={() => onSlotSelect(slot)}>
+                      <span>{active ? <Check size={17} /> : null}<strong>{formatTime(slot.start)}–{formatTime(slot.end)}</strong></span>
+                      <small>Available</small><ChevronRight size={17} />
+                    </button>
+                  );
+                }) : <EmptyState title="No instant openings" body="Browse another floor or use the full room list." />}
+              </div>
+              {selected.action === "request" ? (
+                <button className="find-button reserve-cta" type="button" onClick={onRequest}>Request this space</button>
+              ) : selectedSlot && selectedSlot.resourceId === selected.id ? (
+                <button className="find-button reserve-cta" type="button" onClick={() => onConfirm(selectedSlot)}>Reserve {formatTime(selectedSlot.start)}–{formatTime(selectedSlot.end)}</button>
+              ) : (
+                <button className="find-button reserve-cta" type="button" disabled>Select a time</button>
+              )}
+            </>
+          ) : <EmptyState title="Choose a room" body="Select an available space on the map to see its details." />}
         </aside>
       </div>
     </section>

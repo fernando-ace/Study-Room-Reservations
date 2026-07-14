@@ -1,6 +1,6 @@
 import type { AvailabilitySlot, FloorMap, Reservation, Resource, Site, UserProfile } from "../types";
 
-export const today = "2026-05-11";
+export const today = "2026-07-14";
 
 export const sites: Site[] = [
   {
@@ -206,15 +206,16 @@ export const availability: AvailabilitySlot[] = [
   slot("bk-2132", today, "09:00", "10:00", "available"),
   slot("bk-2132", today, "10:00", "11:30", "reserved"),
   slot("bk-2132", today, "13:00", "14:30", "available"),
+  slot("bk-2132", today, "15:30", "17:00", "available"),
   slot("bk-0115", today, "08:00", "09:30", "available"),
   slot("bk-0136", today, "11:00", "12:30", "available"),
   slot("bk-0150", today, "14:00", "15:30", "available"),
   slot("bk-2118", today, "15:00", "16:30", "available"),
-  slot("bk-2127", "2026-05-12", "10:00", "11:30", "available"),
+  slot("bk-2127", "2026-07-15", "10:00", "11:30", "available"),
   slot("aero-205", today, "09:00", "10:00", "available"),
   slot("aero-van", today, "13:00", "17:00", "available"),
   slot("maker-canon", today, "12:00", "16:00", "available"),
-  slot("maker-waterjet", "2026-05-12", "10:00", "12:00", "available"),
+  slot("maker-waterjet", "2026-07-15", "10:00", "12:00", "available"),
   slot("bsen-caravan", today, "08:00", "12:00", "blocked"),
   slot("micro-sputter", today, "09:00", "11:00", "available"),
 ];
@@ -225,7 +226,7 @@ export const initialReservations: Reservation[] = [
     resourceId: "bk-2118",
     siteId: "brown-kopel",
     title: "Senior design work session",
-    date: "2026-05-12",
+    date: "2026-07-15",
     start: "14:00",
     end: "15:30",
     attendeeCount: 5,
