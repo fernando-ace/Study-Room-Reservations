@@ -1,6 +1,19 @@
 import type { AvailabilitySlot, FloorMap, Reservation, Resource, Site, UserProfile } from "../types";
+import basementFloorPlan from "../assets/floor-plans/BKESAC-basement.png";
+import secondFloorPlan from "../assets/floor-plans/BKESAC-second.png";
 
-export const today = "2026-07-14";
+export function dateKeyInCentralTime(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+export const today = dateKeyInCentralTime();
 
 export const sites: Site[] = [
   {
@@ -167,80 +180,48 @@ export const resources: Resource[] = [
 export const floorMaps: FloorMap[] = [
   {
     siteId: "brown-kopel",
-    floor: "Ground",
-    label: "Ground",
-    source: "Official Brown-Kopel floor-plan PDF",
-    zones: [
-      zone("bk-0115", 53, 9, 10, 13), zone("bk-0118", 64, 9, 10, 13), zone("bk-0122", 75, 9, 10, 13),
-      zone("bk-0132", 55, 34, 8, 12), zone("bk-0134", 64, 34, 8, 12), zone("bk-0136", 73, 34, 8, 12),
-      zone("bk-0138", 82, 34, 8, 12), zone("bk-0150", 76, 56, 8, 12), zone("bk-0152", 85, 56, 8, 12),
-      zone("bk-0154", 55, 56, 8, 12), zone("bk-0158", 64, 56, 11, 26),
-    ],
+    floor: "Bottom Floor",
+    label: "Bottom floor",
+    source: "Official Brown-Kopel bottom-floor plan",
+    sourceUrl: "https://brownkopel.eng.auburn.edu/Sites/site_6/files/img/BKESAC-basement.png",
+    imageSrc: basementFloorPlan,
+    imageAlt:
+      "Official Brown-Kopel bottom-floor plan showing study rooms, classrooms, laboratories, workshops, offices, pavilions, stairs, and restrooms.",
+    nativeWidth: 1000,
+    nativeHeight: 800,
+    resourceIds: brownKopelBottom.map((resource) => resource.id),
   },
   {
     siteId: "brown-kopel",
-    floor: "Floor 1",
-    label: "Floor 1",
-    source: "Official Brown-Kopel floor-plan PDF",
-    zones: [zone("bk-1139d", 34, 21, 19, 19)],
-  },
-  {
-    siteId: "brown-kopel",
-    floor: "Floor 2",
-    label: "Floor 2",
-    source: "Official Brown-Kopel floor-plan PDF",
-    zones: [
-      zone("bk-2118", 10, 12, 10, 12), zone("bk-2120", 22, 12, 10, 12), zone("bk-2122", 34, 12, 10, 12),
-      zone("bk-2125", 48, 12, 10, 12), zone("bk-2127", 60, 12, 10, 12), zone("bk-2128", 72, 12, 10, 12),
-      zone("bk-2130", 12, 36, 10, 12), zone("bk-2132", 24, 36, 10, 12), zone("bk-2135", 36, 36, 10, 12),
-      zone("bk-2137", 48, 36, 10, 12), zone("bk-2143", 62, 35, 24, 22), zone("bk-2145", 10, 62, 10, 12),
-      zone("bk-2147", 22, 62, 10, 12), zone("bk-2153", 34, 62, 10, 12), zone("bk-2159", 46, 62, 10, 12),
-      zone("bk-2161", 58, 62, 10, 12), zone("bk-2162", 70, 62, 10, 12), zone("bk-2164", 10, 78, 10, 12),
-      zone("bk-2166", 22, 78, 10, 12), zone("bk-2168", 34, 78, 10, 12), zone("bk-2170", 46, 78, 10, 12),
-      zone("bk-2172", 58, 78, 10, 12), zone("bk-2174", 72, 76, 16, 14),
+    floor: "Second Floor",
+    label: "Second floor",
+    source: "Official Brown-Kopel second-floor plan",
+    sourceUrl: "https://brownkopel.eng.auburn.edu/Sites/site_6/files/img/BKESAC-second.png",
+    imageSrc: secondFloorPlan,
+    imageAlt:
+      "Official Brown-Kopel second-floor plan showing the foyer, Grand Hall, study rooms, classrooms, conference rooms, stairs, terraces, and restrooms.",
+    nativeWidth: 1000,
+    nativeHeight: 663,
+    resourceIds: [
+      "bk-2114", "bk-2117", "bk-2118", "bk-2120", "bk-2122", "bk-2125", "bk-2127", "bk-2128",
+      "bk-2130", "bk-2132", "bk-2133", "bk-2135", "bk-2137", "bk-2145", "bk-2147", "bk-2153",
+      "bk-2159", "bk-2161", "bk-2162", "bk-2164", "bk-2166", "bk-2168", "bk-2170", "bk-2172",
+      "bk-2174",
     ],
   },
 ];
 
-export const availability: AvailabilitySlot[] = [
-  slot("bk-2132", today, "09:00", "10:00", "available"),
-  slot("bk-2132", today, "10:00", "11:30", "reserved"),
-  slot("bk-2132", today, "13:00", "14:30", "available"),
-  slot("bk-2132", today, "15:30", "17:00", "available"),
-  slot("bk-0115", today, "08:00", "09:30", "available"),
-  slot("bk-0136", today, "11:00", "12:30", "available"),
-  slot("bk-0150", today, "14:00", "15:30", "available"),
-  slot("bk-2118", today, "15:00", "16:30", "available"),
-  slot("bk-2127", "2026-07-15", "10:00", "11:30", "available"),
-  slot("aero-205", today, "09:00", "10:00", "available"),
-  slot("aero-van", today, "13:00", "17:00", "available"),
-  slot("maker-canon", today, "12:00", "16:00", "available"),
-  slot("maker-waterjet", "2026-07-15", "10:00", "12:00", "available"),
-  slot("bsen-caravan", today, "08:00", "12:00", "blocked"),
-  slot("micro-sputter", today, "09:00", "11:00", "available"),
-];
+export const availability: AvailabilitySlot[] = buildMockAvailability();
 
-export const initialReservations: Reservation[] = [
-  {
-    id: "res-100",
-    resourceId: "bk-2118",
-    siteId: "brown-kopel",
-    title: "Senior design work session",
-    date: "2026-07-15",
-    start: "14:00",
-    end: "15:30",
-    attendeeCount: 5,
-    status: "confirmed",
-  },
-];
+export const initialReservations: Reservation[] = [];
 
 export const initialProfile: UserProfile = {
-  firstName: "Fernando",
+  firstName: "Student",
   nickName: "",
-  email: "fja0008@auburn.edu",
+  email: "student@auburn.edu",
   phone: "",
   classification: "",
-  department: "Aerospace",
+  department: "",
   defaultSiteId: "brown-kopel",
   notificationType: "Both",
   newsletter: false,
@@ -273,10 +254,6 @@ function card(
   return resource(id, siteId, name, undefined, capacity, kind, status, "both", [description]);
 }
 
-function zone(resourceId: string, x: number, y: number, w: number, h: number) {
-  return { resourceId, x, y, w, h };
-}
-
 function slot(
   resourceId: string,
   date: string,
@@ -285,4 +262,43 @@ function slot(
   status: AvailabilitySlot["status"],
 ): AvailabilitySlot {
   return { resourceId, date, start, end, status };
+}
+
+function buildMockAvailability() {
+  const templates = [
+    ["08:00", "10:00"],
+    ["10:30", "12:00"],
+    ["13:00", "14:30"],
+    ["15:30", "17:00"],
+  ] as const;
+
+  return resources.flatMap((resource, resourceIndex) => {
+    if (resource.status !== "Open" || resource.action === "request") return [];
+    return Array.from({ length: 6 }, (_, dayIndex) => {
+      const date = addDaysToKey(today, dayIndex);
+      if (resource.id === "bk-2132" && dayIndex === 0) {
+        return [
+          slot(resource.id, date, "09:00", "10:00", "available"),
+          slot(resource.id, date, "10:00", "11:30", "reserved"),
+          slot(resource.id, date, "13:00", "14:30", "available"),
+          slot(resource.id, date, "15:30", "17:00", "available"),
+        ];
+      }
+      return templates.map(([start, end], templateIndex) =>
+        slot(
+          resource.id,
+          date,
+          start,
+          end,
+          (resourceIndex + dayIndex + templateIndex) % 11 === 0 ? "reserved" : "available",
+        ),
+      );
+    }).flat();
+  });
+}
+
+function addDaysToKey(date: string, amount: number) {
+  const value = new Date(`${date}T12:00:00`);
+  value.setDate(value.getDate() + amount);
+  return value.toISOString().slice(0, 10);
 }

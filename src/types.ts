@@ -47,15 +47,12 @@ export type FloorMap = {
   floor: string;
   label: string;
   source: string;
-  zones: FloorZone[];
-};
-
-export type FloorZone = {
-  resourceId: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  sourceUrl: string;
+  imageSrc: string;
+  imageAlt: string;
+  nativeWidth: number;
+  nativeHeight: number;
+  resourceIds: string[];
 };
 
 export type AvailabilitySlot = {

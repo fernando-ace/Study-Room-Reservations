@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, InputHTMLAttributes, PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  FormEvent,
+  InputHTMLAttributes,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent,
+  ReactNode,
+} from "react";
 import {
   Bell,
   Calendar,
@@ -8,24 +14,19 @@ import {
   ChevronRight,
   ClipboardList,
   Clock3,
-  DoorOpen,
   Filter,
-  Layers3,
   List,
-  LocateFixed,
   Map,
   MapPin,
   Plus,
   Search,
   Settings,
-  Sparkles,
   Trash2,
   Users,
   X,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import { AppHeader } from "./components/AppHeader";
+import { FloorMapView } from "./components/FloorMapView";
 import { today } from "./data/mockData";
 import {
   cancelReservation,
@@ -38,7 +39,6 @@ import {
   listResources,
   listSites,
   listSpecialRequests,
-  mapsForSite,
   resourceById,
   resourceFloors,
   resourceKinds,
@@ -93,8 +93,8 @@ export default function App() {
   const [sites, setSites] = useState<Site[]>([]);
   const [activeSiteId, setActiveSiteId] = useState("brown-kopel");
   const [view, setView] = useState<View>("map");
-  const [navOpen, setNavOpen] = useState(false);
   const [siteMenuOpen, setSiteMenuOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [resources, setResources] = useState<Resource[]>([]);
   const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -102,46 +102,113 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [selectedResourceId, setSelectedResourceId] = useState("bk-2132");
   const [selectedSlot, setSelectedSlot] = useState<AvailabilitySlot | null>(null);
-  const [pendingReservationSlot, setPendingReservationSlot] = useState<AvailabilitySlot | null>(null);
+  const [pendingReservation, setPendingReservation] = useState<{
+    slot: AvailabilitySlot;
+    attendeeCount: number;
+  } | null>(null);
   const [weekStart, setWeekStart] = useState(today);
   const [toast, setToast] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
+  const [mutationError, setMutationError] = useState("");
+  const defaultSiteAppliedRef = useRef(false);
 
   const activeSite = siteById(activeSiteId) ?? sites[0];
   const selectedResource = resourceById(selectedResourceId);
+  const findView: View = activeSite?.mapMode === "floor-plan" ? "map" : "reserve";
+  const profileInitials = (profile?.nickName || profile?.firstName || "AU").trim().slice(0, 2).toUpperCase();
 
   useEffect(() => {
-    void Promise.all([listSites(), listReservations(), listSpecialRequests(), getProfile()]).then(
-      ([siteList, reservationList, requestList, userProfile]) => {
+    let active = true;
+    setIsLoading(true);
+    setLoadError("");
+    void Promise.all([listSites(), listReservations(), listSpecialRequests(), getProfile()])
+      .then(([siteList, reservationList, requestList, userProfile]) => {
+        if (!active) return;
         setSites(siteList);
         setReservations(reservationList);
         setRequests(requestList);
         setProfile(userProfile);
-      },
-    );
-  }, []);
+        if (!defaultSiteAppliedRef.current && siteById(userProfile.defaultSiteId)) {
+          defaultSiteAppliedRef.current = true;
+          setActiveSiteId(userProfile.defaultSiteId);
+        }
+      })
+      .catch(() => {
+        if (active) setLoadError("We couldn’t load reservation data. Check your connection and try again.");
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [loadAttempt]);
 
   useEffect(() => {
-    void listResources({ siteId: activeSiteId }).then((siteResources) => {
-      setResources(siteResources);
-      const currentSelection = siteResources.some((resource) => resource.id === selectedResourceId);
-      if (!currentSelection && siteResources[0]) setSelectedResourceId(siteResources[0].id);
-    });
-    void listAvailability(activeSiteId, weekStart, addDays(weekStart, 6)).then(setAvailability);
-  }, [activeSiteId, selectedResourceId, weekStart]);
+    let active = true;
+    void Promise.all([
+      listResources({ siteId: activeSiteId }),
+      listAvailability(activeSiteId, weekStart, addDays(weekStart, 6)),
+    ])
+      .then(([siteResources, siteAvailability]) => {
+        if (!active) return;
+        setResources(siteResources);
+        setAvailability(siteAvailability);
+        setSelectedResourceId((current) =>
+          siteResources.some((resource) => resource.id === current) ? current : (siteResources[0]?.id ?? ""),
+        );
+        setSelectedSlot((current) =>
+          current && siteResources.some((resource) => resource.id === current.resourceId) ? current : null,
+        );
+      })
+      .catch(() => {
+        if (active) setLoadError("We couldn’t load rooms or availability. Try again.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeSiteId, loadAttempt, weekStart]);
 
   async function refreshBookings() {
-    setReservations(await listReservations());
-    setRequests(await listSpecialRequests());
+    const [nextReservations, nextRequests] = await Promise.all([listReservations(), listSpecialRequests()]);
+    setReservations(nextReservations);
+    setRequests(nextRequests);
   }
 
-  function navigate(nextView: View) {
+  async function refreshAvailability() {
+    setAvailability(await listAvailability(activeSiteId, weekStart, addDays(weekStart, 6)));
+  }
+
+  const navigate = useCallback((nextView: View) => {
     setView(nextView);
-    setNavOpen(false);
-  }
+    setSiteMenuOpen(false);
+    if (!['map', 'reserve'].includes(nextView)) setSelectedSlot(null);
+  }, []);
 
-  async function confirmReservation(slot: AvailabilitySlot, title = "Study session") {
+  const changeWeek = useCallback((date: string) => {
+    setWeekStart(date);
+    setSelectedSlot(null);
+    setPendingReservation(null);
+  }, []);
+
+  const selectResource = useCallback((id: string) => {
+    setSelectedResourceId(id);
+    setSelectedSlot(null);
+    setMutationError("");
+  }, []);
+
+  const openReservationReview = useCallback((slot: AvailabilitySlot, attendeeCount = 4) => {
+    const capacity = resourceById(slot.resourceId)?.capacity ?? attendeeCount;
+    setMutationError("");
+    setPendingReservation({ slot, attendeeCount: Math.min(attendeeCount, capacity) });
+  }, []);
+
+  async function confirmReservation(slot: AvailabilitySlot, attendeeCount: number, title = "Study session") {
     const resource = resourceById(slot.resourceId);
-    if (!resource) return;
+    if (!resource || resource.id !== selectedResourceId) throw new Error("Choose a room and time again before reserving.");
     await createReservation({
       resourceId: resource.id,
       siteId: resource.siteId,
@@ -149,18 +216,26 @@ export default function App() {
       date: slot.date,
       start: slot.start,
       end: slot.end,
-      attendeeCount: Math.min(4, resource.capacity),
+      attendeeCount,
     });
     setSelectedSlot(null);
     setToast(`${resource.name} reserved for ${formatTime(slot.start)}.`);
     setView("bookings");
-    await refreshBookings();
+    await Promise.all([refreshBookings(), refreshAvailability()]);
   }
 
   async function confirmPendingReservation() {
-    if (!pendingReservationSlot) return;
-    await confirmReservation(pendingReservationSlot);
-    setPendingReservationSlot(null);
+    if (!pendingReservation || isSaving) return;
+    setIsSaving(true);
+    setMutationError("");
+    try {
+      await confirmReservation(pendingReservation.slot, pendingReservation.attendeeCount);
+      setPendingReservation(null);
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : "The reservation could not be saved.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -168,41 +243,24 @@ export default function App() {
       <AppHeader
         activeSite={activeSite}
         activeSiteId={activeSiteId}
-        navOpen={navOpen}
+        activeView={view}
+        profileInitials={profileInitials}
         siteMenuOpen={siteMenuOpen}
         sites={sites}
-        onHome={() => navigate("map")}
+        onHelp={() => setHelpOpen(true)}
+        onHome={() => navigate(findView)}
+        onNavigate={(nextView) => navigate(nextView === "map" ? findView : nextView)}
         onProfile={() => navigate("profile")}
         onSiteChange={(site) => {
           setActiveSiteId(site.id);
           setSiteMenuOpen(false);
           navigate(site.mapMode === "floor-plan" ? "map" : "reserve");
           setSelectedSlot(null);
+          setPendingReservation(null);
+          setWeekStart(today);
         }}
         onSiteMenuToggle={() => setSiteMenuOpen((open) => !open)}
-        onNavToggle={() => setNavOpen((open) => !open)}
       />
-      <aside className={`sidebar ${navOpen ? "is-open" : ""}`}>
-        <div className="sidebar-context">
-          <span>Current building</span>
-          <strong>{activeSite?.shortName ?? "Reservations"}</strong>
-          <small>{activeSite?.category}</small>
-        </div>
-        <nav className="nav-list" aria-label="Primary navigation">
-          <NavButton icon={<Search size={18} />} active={view === "map"} onClick={() => navigate("map")}>
-            Find a room
-          </NavButton>
-          <NavButton icon={<Calendar size={18} />} active={view === "bookings"} onClick={() => navigate("bookings")}>
-            My Bookings
-          </NavButton>
-          <NavButton icon={<ClipboardList size={18} />} active={view === "requests"} onClick={() => navigate("requests")}>
-            Special Requests
-          </NavButton>
-        </nav>
-        <button className={`profile-nav ${view === "profile" ? "active" : ""}`} type="button" onClick={() => navigate("profile")}>
-          <Settings size={18} /><span>Preferences</span>
-        </button>
-      </aside>
 
       <main className="main-content">
         {toast ? (
@@ -215,6 +273,20 @@ export default function App() {
           </div>
         ) : null}
 
+        {isLoading ? (
+          <section className="app-state" role="status" aria-live="polite">
+            <div className="loading-mark" aria-hidden="true" />
+            <h1>Loading rooms and availability</h1>
+            <p>Preparing the Brown-Kopel reservation workspace.</p>
+          </section>
+        ) : loadError ? (
+          <section className="app-state" role="alert">
+            <h1>Reservation data didn’t load</h1>
+            <p>{loadError}</p>
+            <button className="primary-action" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Try again</button>
+          </section>
+        ) : (
+          <>
         {view === "reserve" ? (
           <ReserveView
             activeSite={activeSite}
@@ -223,10 +295,10 @@ export default function App() {
             selectedResource={selectedResource}
             selectedSlot={selectedSlot}
             weekStart={weekStart}
-            onWeekChange={setWeekStart}
-            onResourceSelect={setSelectedResourceId}
+            onWeekChange={changeWeek}
+            onResourceSelect={selectResource}
             onSlotSelect={setSelectedSlot}
-            onConfirm={setPendingReservationSlot}
+            onConfirm={openReservationReview}
             onMapView={() => navigate("map")}
             onRequest={() => navigate("requests")}
           />
@@ -238,18 +310,28 @@ export default function App() {
             availability={availability}
             selectedResourceId={selectedResourceId}
             selectedSlot={selectedSlot}
-            onResourceSelect={setSelectedResourceId}
+            onResourceSelect={selectResource}
             onSlotSelect={setSelectedSlot}
-            onConfirm={setPendingReservationSlot}
+            onSlotClear={() => setSelectedSlot(null)}
+            onConfirm={openReservationReview}
+            onDateChange={changeWeek}
             onListView={() => navigate("reserve")}
             onRequest={() => navigate("requests")}
           />
         ) : null}
         {view === "bookings" ? (
           <BookingsView reservations={reservations} requests={requests} onCancel={async (id) => {
-            await cancelReservation(id);
-            await refreshBookings();
-            setToast("Reservation cancelled.");
+            if (isSaving) return;
+            setIsSaving(true);
+            try {
+              await cancelReservation(id);
+              await Promise.all([refreshBookings(), refreshAvailability()]);
+              setToast("Reservation cancelled.");
+            } catch {
+              setToast("The reservation could not be cancelled. Try again.");
+            } finally {
+              setIsSaving(false);
+            }
           }} />
         ) : null}
         {view === "requests" && activeSite ? (
@@ -275,9 +357,11 @@ export default function App() {
             }}
           />
         ) : null}
+          </>
+        )}
       </main>
 
-      {selectedSlot && selectedResource ? (
+      {(view === "map" || view === "reserve") && selectedSlot && selectedResource && selectedSlot.resourceId === selectedResource.id ? (
         <div className="mobile-booking-bar">
           <div>
             <strong>{selectedResource.name}</strong>
@@ -285,55 +369,178 @@ export default function App() {
               {dateShort(selectedSlot.date)} · {formatTime(selectedSlot.start)} to {formatTime(selectedSlot.end)}
             </span>
           </div>
-            <button type="button" onClick={() => setPendingReservationSlot(selectedSlot)}>
+            <button type="button" onClick={() => openReservationReview(selectedSlot)}>
               Confirm
             </button>
         </div>
       ) : null}
 
-        {pendingReservationSlot ? (
-          <div className="modal-backdrop" role="presentation">
-            <section className="modal reservation-confirm" role="dialog" aria-modal="true" aria-labelledby="reservation-confirm-title">
+        {pendingReservation ? (
+          <ModalShell
+            className="reservation-confirm"
+            closeDisabled={isSaving}
+            initialFocusSelector="[data-modal-initial-focus]"
+            onClose={() => {
+              setPendingReservation(null);
+              setMutationError("");
+            }}
+            titleId="reservation-confirm-title"
+          >
               <div className="modal-header">
                 <h2 id="reservation-confirm-title">Confirm reservation</h2>
-                <button type="button" aria-label="Close" onClick={() => setPendingReservationSlot(null)}>
+                <button type="button" aria-label="Close" disabled={isSaving} onClick={() => { setPendingReservation(null); setMutationError(""); }}>
                   <X size={18} />
                 </button>
               </div>
               <div className="booking-summary">
-                <span>{resourceById(pendingReservationSlot.resourceId)?.name}</span>
+                <span>{resourceById(pendingReservation.slot.resourceId)?.name}</span>
                 <strong>
-                  {dateShort(pendingReservationSlot.date)} · {formatTime(pendingReservationSlot.start)} to{" "}
-                  {formatTime(pendingReservationSlot.end)}
+                  {dateShort(pendingReservation.slot.date)} · {formatTime(pendingReservation.slot.start)} to{" "}
+                  {formatTime(pendingReservation.slot.end)}
                 </strong>
-                <p>This mock reservation will appear in My Bookings immediately.</p>
+                <small>{pendingReservation.attendeeCount} {pendingReservation.attendeeCount === 1 ? "attendee" : "attendees"}</small>
+                <p>Your reservation will be saved on this device and appear in My reservations immediately.</p>
               </div>
+              {mutationError ? <div className="error-banner" role="alert">{mutationError}</div> : null}
               <div className="modal-actions">
-                <button className="primary-action" type="button" onClick={() => void confirmPendingReservation()}>
-                  Confirm
+                <button className="primary-action" data-modal-initial-focus type="button" disabled={isSaving} onClick={() => void confirmPendingReservation()}>
+                  {isSaving ? "Reserving…" : "Confirm reservation"}
                 </button>
-                <button className="secondary-action" type="button" onClick={() => setPendingReservationSlot(null)}>
+                <button className="secondary-action" type="button" disabled={isSaving} onClick={() => { setPendingReservation(null); setMutationError(""); }}>
                   Cancel
                 </button>
               </div>
-            </section>
-          </div>
+          </ModalShell>
+        ) : null}
+
+        {helpOpen ? (
+          <ModalShell
+            className="help-dialog"
+            initialFocusSelector="[data-modal-initial-focus]"
+            onClose={() => setHelpOpen(false)}
+            titleId="help-dialog-title"
+          >
+              <div className="modal-header">
+                <h2 id="help-dialog-title">How room reservations work</h2>
+                <button data-modal-initial-focus type="button" aria-label="Close help" onClick={() => setHelpOpen(false)}><X size={18} /></button>
+              </div>
+              <ol className="help-steps">
+                <li><strong>Set your time and group.</strong><span>We only show rooms that fit the full session.</span></li>
+                <li><strong>Choose a room and open time.</strong><span>The official floor plan stays visible for orientation.</span></li>
+                <li><strong>Confirm once.</strong><span>The time updates immediately across the map and list.</span></li>
+              </ol>
+              <p className="prototype-note">This student prototype uses sample availability. Official Auburn bookings still require the production Brown-Kopel system.</p>
+              <a className="primary-action" href={activeSite?.url} target="_blank" rel="noreferrer">Open official reservation site</a>
+          </ModalShell>
         ) : null}
 
         <nav className="bottom-nav" aria-label="Mobile navigation">
-          <NavButton icon={<Map size={18} />} active={view === "map"} onClick={() => navigate("map")}>
+          <NavButton icon={<Map size={18} />} active={view === "map" || view === "reserve"} onClick={() => navigate(findView)}>
             Find
           </NavButton>
-          <NavButton icon={<List size={18} />} active={view === "reserve"} onClick={() => navigate("reserve")}>
-            Rooms
-          </NavButton>
           <NavButton icon={<Calendar size={18} />} active={view === "bookings"} onClick={() => navigate("bookings")}>
-            Bookings
+            Reservations
           </NavButton>
           <NavButton icon={<ClipboardList size={18} />} active={view === "requests"} onClick={() => navigate("requests")}>
-            Special Requests
+            Requests
+          </NavButton>
+          <NavButton icon={<Settings size={18} />} active={view === "profile"} onClick={() => navigate("profile")}>
+            Profile
           </NavButton>
         </nav>
+    </div>
+  );
+}
+
+function ModalShell({
+  children,
+  className = "",
+  closeDisabled = false,
+  initialFocusSelector,
+  onClose,
+  titleId,
+}: {
+  children: ReactNode;
+  className?: string;
+  closeDisabled?: boolean;
+  initialFocusSelector?: string;
+  onClose: () => void;
+  titleId: string;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const priorOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const frame = window.requestAnimationFrame(() => {
+      const dialog = dialogRef.current;
+      const requestedTarget = initialFocusSelector
+        ? dialog?.querySelector<HTMLElement>(initialFocusSelector)
+        : null;
+      const firstTarget = dialog?.querySelector<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      (requestedTarget ?? firstTarget ?? dialog)?.focus();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = priorOverflow;
+      restoreFocusRef.current?.focus();
+    };
+  }, [initialFocusSelector]);
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape" && !closeDisabled) {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const focusable = Array.from(
+      dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    ).filter((element) => !element.hasAttribute("hidden"));
+    if (!focusable.length) {
+      event.preventDefault();
+      dialogRef.current?.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !closeDisabled) onClose();
+      }}
+    >
+      <section
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className={`modal ${className}`.trim()}
+        onKeyDown={handleKeyDown}
+        ref={dialogRef}
+        role="dialog"
+        tabIndex={-1}
+      >
+        {children}
+      </section>
     </div>
   );
 }
@@ -684,6 +891,7 @@ function ResourceDetail({
   if (!resource) {
     return <EmptyState title="Choose a resource" body="Select a room, item, vehicle, or lab instrument to see calendar details." />;
   }
+  const matchingSelectedSlot = selectedSlot?.resourceId === resource.id ? selectedSlot : null;
   return (
     <section className="resource-detail">
       <div>
@@ -704,10 +912,10 @@ function ResourceDetail({
           <span key={feature}>{feature}</span>
         ))}
       </div>
-      {selectedSlot ? (
-        <button className="primary-action" type="button" onClick={() => void onConfirm(selectedSlot)}>
+      {matchingSelectedSlot && resource.status === "Open" && resource.action !== "request" ? (
+        <button className="primary-action" type="button" onClick={() => void onConfirm(matchingSelectedSlot)}>
           <Check size={18} />
-          Confirm mock reservation
+          Review reservation
         </button>
       ) : null}
       {resource.action !== "reserve" ? (
@@ -735,10 +943,9 @@ function CalendarPanel({
   onWeekChange: (date: string) => void;
   onSlotSelect: (slot: AvailabilitySlot) => void;
 }) {
-  const [dragStart, setDragStart] = useState<AvailabilitySlot | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef<AvailabilitySlot | null>(null);
   const isDraggingRef = useRef(false);
+  const dragMovedRef = useRef(false);
   const days = Array.from({ length: 6 }, (_, index) => addDays(weekStart, index));
   const slots = availability.filter((slot) => slot.resourceId === resource?.id);
 
@@ -746,6 +953,18 @@ function CalendarPanel({
     if (start.resourceId !== end.resourceId || start.date !== end.date) return;
     const rangeStart = start.start <= end.start ? start : end;
     const rangeEnd = start.start <= end.start ? end : start;
+    const coveredTimes = timeRows.filter((time) => time >= rangeStart.start && time <= rangeEnd.start);
+    const continuous = coveredTimes.every((time) =>
+      slots.some(
+        (slot) =>
+          slot.resourceId === rangeStart.resourceId &&
+          slot.date === rangeStart.date &&
+          slot.status === "available" &&
+          slot.start <= time &&
+          slot.end > time,
+      ),
+    );
+    if (!continuous) return;
     onSlotSelect({
       ...rangeStart,
       end: rangeEnd.end,
@@ -756,23 +975,29 @@ function CalendarPanel({
   function startDrag(slot: AvailabilitySlot) {
     dragStartRef.current = slot;
     isDraggingRef.current = true;
-    setDragStart(slot);
-    setIsDragging(true);
-    onSlotSelect({ ...slot, status: "available" });
+    dragMovedRef.current = false;
   }
 
   function extendDrag(slot: AvailabilitySlot) {
-    const activeStart = dragStartRef.current ?? dragStart;
-    if (!isDraggingRef.current && !isDragging) return;
+    const activeStart = dragStartRef.current;
+    if (!isDraggingRef.current) return;
     if (!activeStart) return;
+    if (activeStart.start === slot.start && activeStart.date === slot.date) return;
+    dragMovedRef.current = true;
     selectSlotRange(activeStart, slot);
   }
 
   function stopDrag() {
     dragStartRef.current = null;
     isDraggingRef.current = false;
-    setIsDragging(false);
-    setDragStart(null);
+  }
+
+  function selectCell(slot: AvailabilitySlot) {
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false;
+      return;
+    }
+    onSlotSelect(slot);
   }
 
   return (
@@ -804,7 +1029,7 @@ function CalendarPanel({
             slots={slots}
             resource={resource}
             selectedSlot={selectedSlot}
-            onSlotSelect={onSlotSelect}
+            onSlotSelect={selectCell}
             onDragStart={startDrag}
             onDragEnter={extendDrag}
           />
@@ -838,14 +1063,17 @@ function TimeRow({
       <div className="time-label">{formatTime(time)}</div>
       {days.map((day) => {
         const match = slots.find((slot) => slot.date === day && slot.start <= time && slot.end > time);
-        const status = match?.status ?? (resource?.status === "Closed" || resource?.status === "Blocked" ? "blocked" : "available");
-        const slot = match ?? {
-          resourceId: resource?.id ?? "",
-          date: day,
-          start: time,
-          end: addHour(time),
-          status,
-        };
+        const status =
+          resource?.status === "Open" && resource.action !== "request" ? (match?.status ?? "blocked") : "blocked";
+        const slot = match
+          ? { ...match, start: time, end: match.end < addHour(time) ? match.end : addHour(time) }
+          : {
+              resourceId: resource?.id ?? "",
+              date: day,
+              start: time,
+              end: addHour(time),
+              status,
+            };
         const selected =
           selectedSlot?.resourceId === slot.resourceId &&
           selectedSlot.date === slot.date &&
@@ -857,6 +1085,7 @@ function TimeRow({
             key={`${day}-${time}`}
             type="button"
             disabled={!resource || status !== "available"}
+            aria-label={`${resource?.name ?? "Room"}, ${dateShort(day)}, ${formatTime(time)}, ${status === "available" ? "available" : status === "reserved" ? "reserved" : "unavailable"}`}
             className={`time-cell ${status} ${selected ? "selected" : ""}`}
             onClick={() => onSlotSelect(availableSlot)}
             onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
@@ -905,217 +1134,6 @@ function kindRankForFit(resource: Resource) {
   if (resource.kind === "Conference Room") return 1;
   if (resource.kind === "Classroom") return 2;
   return 3;
-}
-
-function FloorMapView({
-  site,
-  resources,
-  availability,
-  selectedResourceId,
-  selectedSlot,
-  onResourceSelect,
-  onSlotSelect,
-  onConfirm,
-  onListView,
-  onRequest,
-}: {
-  site?: Site;
-  resources: Resource[];
-  availability: AvailabilitySlot[];
-  selectedResourceId: string;
-  selectedSlot: AvailabilitySlot | null;
-  onResourceSelect: (id: string) => void;
-  onSlotSelect: (slot: AvailabilitySlot) => void;
-  onConfirm: (slot: AvailabilitySlot) => void;
-  onListView: () => void;
-  onRequest: () => void;
-}) {
-  const maps = mapsForSite(site?.id ?? "");
-  const preferredFloor = maps.find((map) => map.floor === "Floor 2")?.floor ?? maps[0]?.floor ?? "";
-  const [floor, setFloor] = useState(preferredFloor);
-  const [groupSize, setGroupSize] = useState("4");
-  const [duration, setDuration] = useState("60");
-  const [startTime, setStartTime] = useState("Now");
-  const [zoom, setZoom] = useState(1);
-  const [searchNote, setSearchNote] = useState("");
-  useEffect(() => setFloor(maps.find((map) => map.floor === "Floor 2")?.floor ?? maps[0]?.floor ?? ""), [site?.id]);
-  const activeMap = maps.find((map) => map.floor === floor) ?? maps[0];
-  const selected = resourceById(selectedResourceId);
-  const selectedAvailability = availability.filter(
-    (slot) => slot.resourceId === selectedResourceId && slot.date === today && slot.status === "available",
-  );
-
-  useEffect(() => {
-    if (!activeMap?.zones.length) return;
-    if (!activeMap.zones.some((zone) => zone.resourceId === selectedResourceId)) {
-      const firstOpen = activeMap.zones.find((zone) => resourceById(zone.resourceId)?.status === "Open");
-      onResourceSelect(firstOpen?.resourceId ?? activeMap.zones[0].resourceId);
-    }
-  }, [activeMap, onResourceSelect, selectedResourceId]);
-
-  function findRooms() {
-    if (!activeMap) return;
-    const fit = activeMap.zones
-      .map((zone) => resourceById(zone.resourceId))
-      .find((resource) => resource?.status === "Open" && resource.capacity >= Number(groupSize));
-    if (fit) {
-      onResourceSelect(fit.id);
-      setSearchNote(`${activeMap.zones.filter((zone) => {
-        const room = resourceById(zone.resourceId);
-        return room?.status === "Open" && room.capacity >= Number(groupSize);
-      }).length} rooms fit your search.`);
-    } else {
-      setSearchNote("No rooms on this floor match that group size.");
-    }
-  }
-
-  return (
-    <section className="view map-view">
-      <div className="map-intro">
-        <div>
-          <h1>Find your room</h1>
-          {searchNote ? <p className="search-feedback" role="status">{searchNote}</p> : null}
-        </div>
-        <div className="view-toggle" aria-label="View options">
-          <button className="active" type="button" aria-pressed="true"><Map size={17} /> Map</button>
-          <button type="button" aria-pressed="false" onClick={onListView}><List size={17} /> List</button>
-        </div>
-      </div>
-      <div className="map-search-bar">
-        <label><span>Date</span><div><Calendar size={18} /><strong>Today, July 14</strong></div></label>
-        <label><span>Start time</span><div><Clock3 size={18} /><select value={startTime} onChange={(event) => setStartTime(event.target.value)}><option>Now</option><option>1:00 PM</option><option>3:00 PM</option></select></div></label>
-        <label><span>Duration</span><div><Clock3 size={18} /><select value={duration} onChange={(event) => setDuration(event.target.value)}><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select></div></label>
-        <label><span>People</span><div><Users size={18} /><select value={groupSize} onChange={(event) => setGroupSize(event.target.value)}><option value="1">1 person</option><option value="2">2 people</option><option value="4">4 people</option><option value="6">6 people</option><option value="10">10+ people</option></select></div></label>
-        <button className="find-button" type="button" onClick={findRooms}>Find rooms</button>
-      </div>
-
-      <div className="map-workspace">
-        <aside className="floor-rail">
-          <span>Floors</span>
-          {maps.length ? (
-            <div className="floor-tabs" aria-label="Choose floor">
-              {maps.map((map) => (
-                <button className={map.floor === activeMap?.floor ? "active" : ""} key={map.floor} type="button" onClick={() => setFloor(map.floor)}>
-                  {map.label}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div className="map-legend">
-            <strong>Map legend</strong>
-            <span><i className="legend-open" /> Available</span>
-            <span><i className="legend-reserved" /> Reserved</span>
-            <span><i className="legend-approval" /> Unavailable</span>
-          </div>
-        </aside>
-
-        <section className="map-canvas-panel">
-          {activeMap ? (
-            <div className="map-stage">
-              <div className="map-zoom-controls">
-                <button type="button" aria-label="Zoom in" onClick={() => setZoom((value) => Math.min(1.2, value + 0.1))}><ZoomIn size={18} /></button>
-                <button type="button" aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(0.8, value - 0.1))}><ZoomOut size={18} /></button>
-                <button type="button" aria-label="Center selected room" onClick={() => { setZoom(1); if (activeMap.zones.some((zone) => zone.resourceId === "bk-2132")) onResourceSelect("bk-2132"); }}><LocateFixed size={18} /></button>
-              </div>
-              <div className={mapClassName(site?.id, activeMap.floor)} style={{ transform: `scale(${zoom})` }} aria-label={`${site?.name} ${activeMap.label} map`}>
-                {site?.id === "brown-kopel" ? (
-                  <>
-                    <div className="map-building-outline" />
-                    <div className="map-blueprint map-blueprint-projects">Student projects</div>
-                    <div className="map-blueprint map-blueprint-core">Service core</div>
-                    <div className="map-blueprint map-blueprint-commons">Atrium</div>
-                    <div className="map-corridor map-corridor-main" />
-                    <div className="map-corridor map-corridor-north" />
-                    <div className="map-corridor map-corridor-east" />
-                    <div className="map-stair map-stair-west">Stairs</div>
-                    <div className="map-stair map-stair-east">Elevator</div>
-                    <span className="main-entrance"><MapPin size={15} /> Main entrance</span>
-                  </>
-                ) : null}
-                {activeMap.zones.map((zone) => {
-                  const resource = resourceById(zone.resourceId);
-                  if (!resource) return null;
-                  return (
-                    <button
-                      key={zone.resourceId}
-                      className={`map-zone ${statusClass(resource.status)} ${zone.resourceId === selectedResourceId ? "selected" : ""}`}
-                      type="button"
-                      aria-label={`${resource.name}, ${resource.status}, seats ${resource.capacity}`}
-                      style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.w}%`, height: `${zone.h}%` }}
-                      onClick={() => onResourceSelect(zone.resourceId)}
-                    >
-                      <span>{resource.name}</span>
-                      {zone.resourceId === selectedResourceId ? <MapPin size={14} /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <div className="resource-zone-map">
-              {groupedResources(site?.id ?? "").map((group) => (
-                <section key={group.label}>
-                  <h2>{group.label}</h2>
-                  <div>
-                    {group.resources.map((resource) => (
-                      <button
-                        key={resource.id}
-                        type="button"
-                        className={resource.id === selectedResourceId ? "selected" : ""}
-                        onClick={() => onResourceSelect(resource.id)}
-                      >
-                        <span className={`status-dot ${statusClass(resource.status)}`} />
-                        {resource.name}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <aside className="map-detail-panel">
-          {selected ? (
-            <>
-              <div className="room-detail-heading">
-                <div><span className={`status-dot ${statusClass(selected.status)}`} /><strong>{selected.status === "Open" ? "Available now" : selected.status}</strong></div>
-                <h2>{selected.kind === "Study Room" ? "Room" : selected.kind} {selected.name}</h2>
-              </div>
-              <div className="room-facts">
-                <span><Users size={18} /> Seats {selected.capacity}</span>
-                {selected.features.slice(0, 3).map((feature, index) => <span key={feature}>{index === 0 ? <DoorOpen size={18} /> : index === 1 ? <Layers3 size={18} /> : <MapPin size={18} />}{feature}</span>)}
-              </div>
-              <div className="availability-list">
-                <div><h3>Today</h3><span>{selectedAvailability.length} open times</span></div>
-                {selectedAvailability.length ? selectedAvailability.map((slot) => {
-                  const active = selectedSlot?.resourceId === slot.resourceId && selectedSlot.start === slot.start;
-                  return (
-                    <button className={active ? "active" : ""} type="button" key={`${slot.date}-${slot.start}`} onClick={() => onSlotSelect(slot)}>
-                      <span>{active ? <Check size={17} /> : null}<strong>{formatTime(slot.start)}–{formatTime(slot.end)}</strong></span>
-                      <small>Available</small><ChevronRight size={17} />
-                    </button>
-                  );
-                }) : <EmptyState title="No instant openings" body="Browse another floor or use the full room list." />}
-              </div>
-              {selected.action === "request" ? (
-                <button className="find-button reserve-cta" type="button" onClick={onRequest}>Request this space</button>
-              ) : selectedSlot && selectedSlot.resourceId === selected.id ? (
-                <button className="find-button reserve-cta" type="button" onClick={() => onConfirm(selectedSlot)}>Reserve {formatTime(selectedSlot.start)}–{formatTime(selectedSlot.end)}</button>
-              ) : (
-                <button className="find-button reserve-cta" type="button" disabled>Select a time</button>
-              )}
-            </>
-          ) : <EmptyState title="Choose a room" body="Select an available space on the map to see its details." />}
-        </aside>
-      </div>
-    </section>
-  );
-}
-
-function mapClassName(siteId?: string, floor?: string) {
-  const floorName = floor?.toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "unknown";
-  return `floor-map ${siteId === "brown-kopel" ? "brown-kopel-map" : ""} floor-${floorName}`;
 }
 
 function BookingsView({
@@ -1215,14 +1233,34 @@ function SpecialRequestView({
   const [requestErrors, setRequestErrors] = useState<string[]>([]);
   const [roomError, setRoomError] = useState("");
   const [sent, setSent] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const roomOptions = resources.filter((resource) => spaceType === "Any" || resource.kind === spaceType);
   const editingRoom = rooms.find((room) => room.id === editingRoomId);
+
+  useEffect(() => {
+    setRooms([]);
+    setModalOpen(false);
+    setSpaceType("Any");
+    setRequestedResourceId("");
+    setEditingRoomId(null);
+    setRequestErrors([]);
+    setRoomError("");
+    setSent(false);
+  }, [site.id]);
+
+  function closeRoomModal() {
+    setModalOpen(false);
+    setEditingRoomId(null);
+    setSpaceType("Any");
+    setRequestedResourceId("");
+    setRoomError("");
+  }
 
   function addRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const nextRoom: RequestRoom = {
-      id: editingRoomId ?? `room-${Date.now()}`,
+      id: editingRoomId ?? `room-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`}`,
       siteId: site.id,
       typeOfSpace: spaceType,
       requestedResourceId: requestedResourceId || undefined,
@@ -1239,6 +1277,17 @@ function SpecialRequestView({
       tables: Number(form.get("tables") || 0),
     };
     const roomErrors = validateRequestRoom(nextRoom);
+    const requestedResource = nextRoom.requestedResourceId
+      ? resources.find((resource) => resource.id === nextRoom.requestedResourceId)
+      : undefined;
+    if (
+      nextRoom.requestedResourceId &&
+      (!requestedResource ||
+        requestedResource.siteId !== site.id ||
+        (spaceType !== "Any" && requestedResource.kind !== spaceType))
+    ) {
+      roomErrors.push("Choose a room that matches this site and space type.");
+    }
     if (roomErrors.length) {
       setRoomError(roomErrors[0]);
       return;
@@ -1246,15 +1295,12 @@ function SpecialRequestView({
     setRooms((current) =>
       editingRoomId ? current.map((room) => (room.id === editingRoomId ? nextRoom : room)) : [...current, nextRoom],
     );
-    setModalOpen(false);
-    setEditingRoomId(null);
-    setSpaceType("Any");
-    setRequestedResourceId("");
-    setRoomError("");
+    closeRoomModal();
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSubmitting) return;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const nextRequest: Omit<SpecialRequest, "id" | "createdAt"> = {
@@ -1278,11 +1324,19 @@ function SpecialRequestView({
       setSent(false);
       return;
     }
-    await onSubmit(nextRequest);
-    setRooms([]);
-    setRequestErrors([]);
-    setSent(true);
-    formElement.reset();
+    setIsSubmitting(true);
+    try {
+      await onSubmit(nextRequest);
+      setRooms([]);
+      setRequestErrors([]);
+      setSent(true);
+      formElement.reset();
+    } catch (error) {
+      setRequestErrors([error instanceof Error ? error.message : "The special request could not be saved."]);
+      setSent(false);
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -1390,23 +1444,26 @@ function SpecialRequestView({
             <input name="itinerary" type="file" />
           </label>
           <Field name="fop" label="FOP account to charge" />
-          <button className="primary-action" type="submit">Submit</button>
+          <button className="primary-action" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Submitting…" : "Submit"}
+          </button>
         </fieldset>
       </form>
       {requests.length ? <p className="history-note">{requests.length} prior request{requests.length === 1 ? "" : "s"} saved this session.</p> : null}
       {modalOpen ? (
-        <div className="modal-backdrop" role="presentation">
-          <form className="modal" onSubmit={addRoom} role="dialog" aria-modal="true" aria-labelledby="add-room-title">
+        <ModalShell
+          className="add-room-dialog"
+          initialFocusSelector="[data-modal-initial-focus]"
+          onClose={closeRoomModal}
+          titleId="add-room-title"
+        >
+          <form className="add-room-form" onSubmit={addRoom}>
             <div className="modal-header">
               <h2 id="add-room-title">{editingRoom ? "Edit Room" : "Add Room"}</h2>
               <button
                 type="button"
                 aria-label="Close"
-                onClick={() => {
-                  setModalOpen(false);
-                  setEditingRoomId(null);
-                  setRoomError("");
-                }}
+                onClick={closeRoomModal}
               >
                 <X size={18} />
               </button>
@@ -1414,7 +1471,14 @@ function SpecialRequestView({
             {roomError ? <div className="error-banner" role="alert">{roomError}</div> : null}
             <label className="field stacked">
               <span>Type of Space</span>
-              <select value={spaceType} onChange={(event) => setSpaceType(event.target.value as ResourceKind | "Any")}>
+              <select
+                data-modal-initial-focus
+                value={spaceType}
+                onChange={(event) => {
+                  setSpaceType(event.target.value as ResourceKind | "Any");
+                  setRequestedResourceId("");
+                }}
+              >
                 <option>Any</option>
                 <option>Ballroom</option>
                 <option>Classroom</option>
@@ -1463,17 +1527,13 @@ function SpecialRequestView({
               <button
                 className="secondary-action"
                 type="button"
-                onClick={() => {
-                  setModalOpen(false);
-                  setEditingRoomId(null);
-                  setRoomError("");
-                }}
+                onClick={closeRoomModal}
               >
                 Close
               </button>
             </div>
           </form>
-        </div>
+        </ModalShell>
       ) : null}
     </section>
   );
@@ -1487,8 +1547,8 @@ function validateRequestRoom(room: RequestRoom) {
   if (`${room.endDate}T${room.endTime}` <= `${room.startDate}T${room.startTime}`) {
     errors.push("Room end date and time must be after the start date and time.");
   }
-  if (!Number.isFinite(room.attendees) || room.attendees < 1) {
-    errors.push("Each room request needs at least one attendee.");
+  if (!Number.isFinite(room.attendees) || !Number.isInteger(room.attendees) || room.attendees < 1) {
+    errors.push("Each room request needs a whole-number attendee count of at least 1.");
   }
   return errors;
 }
@@ -1503,8 +1563,8 @@ function validateSpecialRequest(request: Omit<SpecialRequest, "id" | "createdAt"
     errors.push("Contact Email must be valid.");
   }
   if (!request.rooms.length) errors.push("Add at least one room/date request.");
-  if (!Number.isFinite(request.attendeeCount) || request.attendeeCount < 1) {
-    errors.push("Total estimated attendees must be at least 1.");
+  if (!Number.isFinite(request.attendeeCount) || !Number.isInteger(request.attendeeCount) || request.attendeeCount < 1) {
+    errors.push("Total estimated attendees must be a whole number of at least 1.");
   }
   request.rooms.flatMap(validateRequestRoom).forEach((error) => errors.push(error));
   return Array.from(new Set(errors));
@@ -1512,15 +1572,23 @@ function validateSpecialRequest(request: Omit<SpecialRequest, "id" | "createdAt"
 
 function ProfileView({ profile, sites, onSave }: { profile: UserProfile; sites: Site[]; onSave: (profile: UserProfile) => Promise<void> }) {
   const [draft, setDraft] = useState(profile);
+  const [saveError, setSaveError] = useState("");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   return (
     <section className="view">
       <div className="page-intro">
         <p>Communication Preferences</p>
         <h1>Profile and defaults.</h1>
       </div>
+      {saveError ? <div className="error-banner" role="alert">{saveError}</div> : null}
       <form className="profile-grid" onSubmit={(event) => {
         event.preventDefault();
-        void onSave(draft);
+        if (isSavingProfile) return;
+        setIsSavingProfile(true);
+        setSaveError("");
+        void onSave(draft)
+          .catch((error) => setSaveError(error instanceof Error ? error.message : "Preferences could not be saved."))
+          .finally(() => setIsSavingProfile(false));
       }}>
         <section>
           <h2>Update User Information</h2>
@@ -1541,6 +1609,7 @@ function ProfileView({ profile, sites, onSave }: { profile: UserProfile; sites: 
           <label className="field stacked">
             <span>Affiliated Major/Department</span>
             <select value={draft.department} onChange={(event) => setDraft({ ...draft, department: event.target.value })}>
+              <option value="">Select one</option>
               {["Aerospace", "Biosystems", "Chemical", "Civil and Environmental", "Computer Science and Software", "Electrical and Computer", "Industrial and Systems", "Material", "Mechanical", "Other Engineering", "Not Engineering"].map((department) => (
                 <option key={department}>{department}</option>
               ))}
@@ -1564,7 +1633,9 @@ function ProfileView({ profile, sites, onSave }: { profile: UserProfile; sites: 
           <h3>Email List Subscription</h3>
           <Toggle label="Newsletter" checked={draft.newsletter} onChange={(newsletter) => setDraft({ ...draft, newsletter })} />
           <Toggle label="Events" checked={draft.events} onChange={(events) => setDraft({ ...draft, events })} />
-          <button className="primary-action" type="submit">Update</button>
+          <button className="primary-action" type="submit" disabled={isSavingProfile}>
+            {isSavingProfile ? "Updating…" : "Update"}
+          </button>
         </section>
       </form>
     </section>

@@ -8,11 +8,17 @@ import type {
   UserProfile,
 } from "../types";
 
-const delay = async () => new Promise((resolve) => window.setTimeout(resolve, 90));
+const STORAGE_KEYS = {
+  reservations: "auburn-room-reservations:v3:reservations",
+  requests: "auburn-room-reservations:v3:requests",
+  profile: "auburn-room-reservations:v3:profile",
+} as const;
 
-let reservations: Reservation[] = [...initialReservations];
-let requests: SpecialRequest[] = [];
-let profile: UserProfile = { ...initialProfile };
+const delay = async () => new Promise((resolve) => globalThis.setTimeout(resolve, 90));
+
+let reservations = readStored(STORAGE_KEYS.reservations, initialReservations);
+let requests = readStored<SpecialRequest[]>(STORAGE_KEYS.requests, []);
+let profile = readStored(STORAGE_KEYS.profile, initialProfile);
 
 export async function listSites() {
   await delay();
@@ -39,65 +45,82 @@ export async function listResources(filters: ResourceFilters) {
 
 export async function listAvailability(siteId: string, startDate: string, endDate: string) {
   await delay();
+  reservations = readStored(STORAGE_KEYS.reservations, initialReservations);
   const siteResourceIds = new Set(resources.filter((resource) => resource.siteId === siteId).map((resource) => resource.id));
-  const confirmedKeys = new Set(
-    reservations
-      .filter((reservation) => reservation.status === "confirmed")
-      .map((reservation) => `${reservation.resourceId}-${reservation.date}-${reservation.start}-${reservation.end}`),
-  );
+  const confirmed = reservations.filter((reservation) => reservation.status === "confirmed");
+
   return availability
     .filter((slot) => siteResourceIds.has(slot.resourceId) && slot.date >= startDate && slot.date <= endDate)
-    .map((slot) => ({
-      ...slot,
-      status: confirmedKeys.has(`${slot.resourceId}-${slot.date}-${slot.start}-${slot.end}`) ? "reserved" : slot.status,
-    })) satisfies AvailabilitySlot[];
+    .flatMap((slot) => splitSlotAroundReservations(slot, confirmed)) satisfies AvailabilitySlot[];
 }
 
 export async function listReservations() {
   await delay();
+  reservations = readStored(STORAGE_KEYS.reservations, initialReservations);
   return reservations.filter((reservation) => reservation.status === "confirmed");
 }
 
 export async function createReservation(input: Omit<Reservation, "id" | "status">) {
   await delay();
-  const reservation: Reservation = { ...input, id: `res-${Date.now()}`, status: "confirmed" };
+  reservations = readStored(STORAGE_KEYS.reservations, initialReservations);
+  validateReservation(input);
+  const reservation: Reservation = { ...input, id: uniqueId("res"), status: "confirmed" };
   reservations = [reservation, ...reservations];
+  writeStored(STORAGE_KEYS.reservations, reservations);
   return reservation;
 }
 
 export async function updateReservation(id: string, input: Partial<Reservation>) {
   await delay();
-  reservations = reservations.map((reservation) => (reservation.id === id ? { ...reservation, ...input } : reservation));
-  return reservations.find((reservation) => reservation.id === id);
+  reservations = readStored(STORAGE_KEYS.reservations, initialReservations);
+  const current = reservations.find((reservation) => reservation.id === id);
+  if (!current) throw new Error("Reservation not found.");
+  const next = { ...current, ...input };
+  if (next.status === "confirmed") validateReservation(next, id);
+  reservations = reservations.map((reservation) => (reservation.id === id ? next : reservation));
+  writeStored(STORAGE_KEYS.reservations, reservations);
+  return next;
 }
 
 export async function cancelReservation(id: string) {
   await delay();
+  reservations = readStored(STORAGE_KEYS.reservations, initialReservations);
+  if (!reservations.some((reservation) => reservation.id === id && reservation.status === "confirmed")) {
+    throw new Error("Reservation not found.");
+  }
   reservations = reservations.map((reservation) =>
     reservation.id === id ? { ...reservation, status: "cancelled" } : reservation,
   );
+  writeStored(STORAGE_KEYS.reservations, reservations);
 }
 
 export async function createSpecialRequest(input: Omit<SpecialRequest, "id" | "createdAt">) {
   await delay();
-  const request: SpecialRequest = { ...input, id: `req-${Date.now()}`, createdAt: new Date().toISOString() };
+  requests = readStored<SpecialRequest[]>(STORAGE_KEYS.requests, []);
+  validateSpecialRequestInput(input);
+  const request: SpecialRequest = { ...input, id: uniqueId("req"), createdAt: new Date().toISOString() };
   requests = [request, ...requests];
+  writeStored(STORAGE_KEYS.requests, requests);
   return request;
 }
 
 export async function listSpecialRequests() {
   await delay();
+  requests = readStored<SpecialRequest[]>(STORAGE_KEYS.requests, []);
   return requests;
 }
 
 export async function getProfile() {
   await delay();
+  profile = readStored(STORAGE_KEYS.profile, initialProfile);
   return profile;
 }
 
 export async function updateProfile(input: UserProfile) {
   await delay();
+  validateProfile(input);
   profile = { ...input };
+  writeStored(STORAGE_KEYS.profile, profile);
   return profile;
 }
 
@@ -126,9 +149,14 @@ export function resourceFloors(siteId: string) {
 export function groupedResources(siteId: string) {
   const list = resources.filter((resource) => resource.siteId === siteId);
   if (siteId === "brown-kopel") {
+    const bottomIds = floorMaps.find((map) => map.siteId === siteId && map.floor === "Bottom Floor")?.resourceIds ?? [];
+    const secondIds = floorMaps.find((map) => map.siteId === siteId && map.floor === "Second Floor")?.resourceIds ?? [];
+    const mappedIds = new Set([...bottomIds, ...secondIds]);
+    const resourcesForIds = (ids: string[]) => ids.map((id) => list.find((resource) => resource.id === id)).filter((resource): resource is Resource => Boolean(resource));
     return [
-      { label: "Bottom Floor", resources: list.filter((resource) => resource.floor === "Bottom Floor") },
-      { label: "Second Floor", resources: list.filter((resource) => resource.floor === "Second Floor") },
+      { label: "Bottom Floor", resources: resourcesForIds(bottomIds) },
+      { label: "Second Floor", resources: resourcesForIds(secondIds) },
+      { label: "Other event spaces", resources: list.filter((resource) => !mappedIds.has(resource.id)) },
       { label: "View All", resources: list },
     ];
   }
@@ -147,4 +175,126 @@ export function categoryFor(resource: Resource) {
     return resource.features.includes("Geospatial Equipment") ? "Geospatial Equipment" : "Automotive Equipment";
   }
   return resource.kind === "Conference Room" ? "Conference Rooms" : `${resource.kind}`;
+}
+
+export function intervalsOverlap(startA: string, endA: string, startB: string, endB: string) {
+  return startA < endB && endA > startB;
+}
+
+function validateReservation(input: Omit<Reservation, "id" | "status"> | Reservation, excludeId?: string) {
+  const resource = resourceById(input.resourceId);
+  if (!resource || resource.siteId !== input.siteId) throw new Error("That room is no longer available.");
+  if (resource.status !== "Open" || resource.action === "request") {
+    throw new Error("This space requires a special request and cannot be reserved instantly.");
+  }
+  if (input.start >= input.end) throw new Error("Choose an end time after the start time.");
+  if (!Number.isFinite(input.attendeeCount) || !Number.isInteger(input.attendeeCount) || input.attendeeCount < 1 || input.attendeeCount > resource.capacity) {
+    throw new Error(`Room ${resource.name} seats up to ${resource.capacity}.`);
+  }
+
+  const coveredByOpenSlot = availability.some(
+    (slot) =>
+      slot.resourceId === input.resourceId &&
+      slot.date === input.date &&
+      slot.status === "available" &&
+      slot.start <= input.start &&
+      slot.end >= input.end,
+  );
+  if (!coveredByOpenSlot) throw new Error("That time is outside the room's available booking window.");
+
+  const conflict = reservations.some(
+    (reservation) =>
+      reservation.id !== excludeId &&
+      reservation.status === "confirmed" &&
+      reservation.resourceId === input.resourceId &&
+      reservation.date === input.date &&
+      intervalsOverlap(reservation.start, reservation.end, input.start, input.end),
+  );
+  if (conflict) throw new Error("That time was just reserved. Choose another open time.");
+}
+
+function splitSlotAroundReservations(slot: AvailabilitySlot, confirmed: Reservation[]): AvailabilitySlot[] {
+  if (slot.status !== "available") return [slot];
+  const conflicts = confirmed
+    .filter(
+      (reservation) =>
+        reservation.resourceId === slot.resourceId &&
+        reservation.date === slot.date &&
+        intervalsOverlap(reservation.start, reservation.end, slot.start, slot.end),
+    )
+    .sort((a, b) => a.start.localeCompare(b.start));
+
+  return conflicts.reduce<AvailabilitySlot[]>((segments, reservation) =>
+    segments.flatMap((segment) => {
+      if (segment.status !== "available" || !intervalsOverlap(reservation.start, reservation.end, segment.start, segment.end)) {
+        return [segment];
+      }
+      const overlapStart = reservation.start > segment.start ? reservation.start : segment.start;
+      const overlapEnd = reservation.end < segment.end ? reservation.end : segment.end;
+      return [
+        ...(segment.start < overlapStart ? [{ ...segment, end: overlapStart }] : []),
+        { ...segment, start: overlapStart, end: overlapEnd, status: "reserved" as const },
+        ...(overlapEnd < segment.end ? [{ ...segment, start: overlapEnd }] : []),
+      ];
+    }), [slot]);
+}
+
+function validateSpecialRequestInput(input: Omit<SpecialRequest, "id" | "createdAt">) {
+  if (!siteById(input.siteId)) throw new Error("Choose a valid reservation site.");
+  if (!input.eventName.trim() || !input.contactName.trim()) throw new Error("Event and contact names are required.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.contactEmail)) throw new Error("Enter a valid contact email.");
+  if (!Number.isFinite(input.attendeeCount) || !Number.isInteger(input.attendeeCount) || input.attendeeCount < 1) {
+    throw new Error("Enter a whole-number attendee count.");
+  }
+  if (!input.rooms.length) throw new Error("Add at least one room or space.");
+  input.rooms.forEach((room) => {
+    if (room.siteId !== input.siteId) throw new Error("Every requested room must belong to the selected site.");
+    if (`${room.endDate}T${room.endTime}` <= `${room.startDate}T${room.startTime}`) {
+      throw new Error("Every room request must end after it starts.");
+    }
+    if (!Number.isFinite(room.attendees) || !Number.isInteger(room.attendees) || room.attendees < 1) {
+      throw new Error("Every room needs a whole-number attendee count.");
+    }
+    if (room.requestedResourceId) {
+      const resource = resourceById(room.requestedResourceId);
+      if (!resource || resource.siteId !== input.siteId || (room.typeOfSpace !== "Any" && resource.kind !== room.typeOfSpace)) {
+        throw new Error("A requested room does not match the selected site or space type.");
+      }
+    }
+  });
+}
+
+function validateProfile(input: UserProfile) {
+  if (!input.firstName.trim()) throw new Error("First name is required.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) throw new Error("Enter a valid email address.");
+  if (!siteById(input.defaultSiteId)) throw new Error("Choose a valid default site.");
+  if (!['Email', 'Text', 'Both'].includes(input.notificationType)) throw new Error("Choose a valid notification preference.");
+}
+
+function uniqueId(prefix: string) {
+  const value = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}-${value}`;
+}
+
+function readStored<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return clone(fallback);
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? (JSON.parse(value) as T) : clone(fallback);
+  } catch {
+    return clone(fallback);
+  }
+}
+
+function writeStored<T>(key: string, value: T) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // The in-memory state remains usable when storage is unavailable.
+  }
+}
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
