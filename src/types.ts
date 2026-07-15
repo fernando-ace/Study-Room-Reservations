@@ -53,6 +53,7 @@ export type FloorMap = {
   nativeWidth: number;
   nativeHeight: number;
   resourceIds: string[];
+  mapLabelsByResourceId: Record<string, string>;
 };
 
 export type AvailabilitySlot = {

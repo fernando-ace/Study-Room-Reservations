@@ -2946,7 +2946,7 @@ body {
 
 .compact-room-list > button > span {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
@@ -2960,6 +2960,16 @@ body {
   color: var(--muted);
   font-size: 0.68rem;
   line-height: 1.25;
+}
+
+.compact-room-list .map-room-reference {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--auburn-navy);
+  background: var(--surface-alt);
+  font-weight: 600;
 }
 
 .show-more-rooms,
@@ -3126,6 +3136,17 @@ body {
   font-size: 0.68rem;
 }
 
+.map-caption-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.map-caption-copy small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .official-map-figure figcaption a {
   display: inline-flex;
   align-items: center;
@@ -3160,6 +3181,25 @@ body {
 
 .room-detail-heading h2 {
   font-size: clamp(1.8rem, 2.5vw, 2.45rem);
+}
+
+.room-map-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.room-map-note svg {
+  flex: 0 0 auto;
+  color: var(--auburn-orange);
+}
+
+.room-map-note strong {
+  color: var(--auburn-navy);
 }
 
 .availability-list > button {

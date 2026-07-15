@@ -9,6 +9,7 @@ import {
   ExternalLink,
   List,
   Map as MapIcon,
+  MapPin,
   Maximize2,
   Minus,
   Monitor,
@@ -129,6 +130,7 @@ export function FloorMapView({
     [matchingRooms, selectedResourceId],
   );
   const displayedRooms = showAllRooms ? orderedMatchingRooms : orderedMatchingRooms.slice(0, 6);
+  const selectedMapLabel = selectedResource ? activeMap?.mapLabelsByResourceId[selectedResource.id] : undefined;
 
   useEffect(() => {
     const nextFloor = maps.find((map) => map.floor === "Second Floor")?.floor ?? maps[0]?.floor ?? "";
@@ -254,18 +256,24 @@ export function FloorMapView({
             <span>{formatDate(searchDate)} · {formatTime(startTime)}</span>
           </div>
           <div className="compact-room-list">
-            {displayedRooms.length ? displayedRooms.map((resource) => (
-              <button
-                className={resource.id === selectedResourceId ? "selected" : ""}
-                type="button"
-                aria-pressed={resource.id === selectedResourceId}
-                key={resource.id}
-                onClick={() => onResourceSelect(resource.id)}
-              >
-                <span><strong>Room {resource.name}</strong><small>Seats {resource.capacity}</small></span>
-                <small>{resource.features.slice(0, 2).join(" · ")}</small>
-              </button>
-            )) : (
+            {displayedRooms.length ? displayedRooms.map((resource) => {
+              const mapLabel = activeMap?.mapLabelsByResourceId[resource.id];
+              return (
+                <button
+                  className={resource.id === selectedResourceId ? "selected" : ""}
+                  type="button"
+                  aria-pressed={resource.id === selectedResourceId}
+                  key={resource.id}
+                  onClick={() => onResourceSelect(resource.id)}
+                >
+                  <span>
+                    <strong>Room {resource.name}</strong>
+                    {mapLabel ? <small className="map-room-reference">Map {mapLabel}</small> : <small>Seats {resource.capacity}</small>}
+                  </span>
+                  <small>{mapLabel ? `Seats ${resource.capacity} · ` : ""}{resource.features.slice(0, 2).join(" · ")}</small>
+                </button>
+              );
+            }) : (
               <div className="room-results-empty">
                 <strong>No matching rooms</strong>
                 <p>Try an earlier start, a shorter session, or a different floor.</p>
@@ -325,7 +333,10 @@ export function FloorMapView({
                 </div>
               </div>
               <figcaption>
-                <span id="official-map-title">{activeMap.source}</span>
+                <span className="map-caption-copy">
+                  <span id="official-map-title">{activeMap.source}</span>
+                  <small>Map numbers are wayfinding labels. Match them to the “Map” number beside each room.</small>
+                </span>
                 <a href={activeMap.sourceUrl} target="_blank" rel="noreferrer">View original <ExternalLink size={13} /></a>
               </figcaption>
             </figure>
@@ -343,6 +354,9 @@ export function FloorMapView({
                   <strong>{selectedAvailability.length ? (searchDate === today ? "Available today" : `Available ${formatDate(searchDate)}`) : "No open times"}</strong>
                 </div>
                 <h2>{selectedResource.kind === "Study Room" ? "Room" : selectedResource.kind} {selectedResource.name}</h2>
+                {selectedMapLabel ? (
+                  <p className="room-map-note"><MapPin size={14} /> Shown as <strong>Map {selectedMapLabel}</strong> on the floor plan</p>
+                ) : null}
               </div>
               <div className="room-facts">
                 <span><Users size={18} /> Seats {selectedResource.capacity}</span>
